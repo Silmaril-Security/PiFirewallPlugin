@@ -6,4 +6,4 @@ export function buildDemoStatus(env?: Record<string, string | undefined>): {
   hasApiKey: boolean;
   apiUrlOrigin: string | undefined;
 };
-export function openBrowser(url: string, spawnImpl?: (...args: any[]) => any): boolean;
+export function openBrowser(url: string, spawnImpl?: (...args: any[]) => any): Promise<boolean>;

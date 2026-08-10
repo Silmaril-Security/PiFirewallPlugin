@@ -56,14 +56,18 @@ function openerCommand(url) {
 
 export function openBrowser(url, spawnImpl = spawn) {
   const { command, args, options } = openerCommand(url);
-  try {
-    const child = spawnImpl(command, args, options);
-    child.once("error", () => undefined);
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
+  return new Promise((resolve) => {
+    try {
+      const child = spawnImpl(command, args, options);
+      child.once("error", () => resolve(false));
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 async function main() {
@@ -76,7 +80,7 @@ async function main() {
   const url = buildDemoUrl(process.env.SILMARIL_DEMO_BASE_URL, route);
   const status = buildDemoStatus();
   console.log(hasFlag("--json") ? JSON.stringify({ url, ...status }) : url);
-  if (hasFlag("--open") && !openBrowser(url)) process.exitCode = 1;
+  if (hasFlag("--open") && !(await openBrowser(url))) process.exitCode = 1;
 }
 
 function isMainModule() {

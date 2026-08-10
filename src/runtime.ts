@@ -1,4 +1,4 @@
-import { Firewall, HookLabel } from "@silmaril-security/sdk";
+import { Firewall, HookLabel, type FirewallOptions } from "@silmaril-security/sdk";
 import { createHash } from "node:crypto";
 import type {
   ExtensionAPI,
@@ -31,7 +31,7 @@ type ClassificationResult = Record<string, unknown>;
 type FirewallClient = {
   classify(text: string, options?: { hook?: string; toolName?: string; metadata?: Record<string, unknown>; requestId?: string }): Promise<ClassificationResult>;
 };
-type FirewallConstructor = new (options: { apiKey: string; apiUrl: string; timeoutMs: number }) => FirewallClient;
+type FirewallConstructor = new (options: FirewallOptions) => FirewallClient;
 type PiHost = Pick<ExtensionAPI, "sendMessage">;
 type PiToolResultPatch = { content?: ToolResultEvent["content"]; details?: unknown; isError?: boolean };
 type PiMessageEndPatch = { message?: MessageEndEvent["message"] };

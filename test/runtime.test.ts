@@ -4,6 +4,7 @@ import { mkdtemp, readFile, stat, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Firewall } from "@silmaril-security/sdk";
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 import registerExtension from "../extensions/firewall.ts";
@@ -93,6 +94,15 @@ test("runtime configuration is environment-only and defaults safely", () => {
   });
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_TIMEOUT_MS: "10001" })?.timeoutMs, 2500);
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "on" })?.blockMalicious, true);
+});
+
+test("the pinned SDK receives the configured timeoutMs option", () => {
+  const firewall = new Firewall({
+    apiKey: "test-key",
+    apiUrl: "http://127.0.0.1:1",
+    timeoutMs: 375,
+  });
+  assert.equal(firewall.timeoutMs, 375);
 });
 
 test("extension registers only the four intended Pi lifecycle events", () => {
@@ -269,16 +279,24 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   assert.equal(await writeLocalProtectionEvent(event, { SILMARIL_LOCAL_EVENT_DIR: symlinkRoot }), undefined);
 });
 
-test("demo launcher is credential-safe", () => {
+test("demo launcher is credential-safe", async () => {
   assert.equal(normalizeBaseUrl("example.com/path?key=value"), "https://example.com");
   assert.equal(buildDemoUrl("https://app.silmaril.dev", "setup"), "https://app.silmaril.dev/demo/setup-complete");
   const statusPayload = JSON.stringify(buildDemoStatus({ SILMARIL_API_KEY: "super-secret", SILMARIL_API_URL: "https://api.example/path" }));
   assert.doesNotMatch(statusPayload, /super-secret/u);
 
-  const child = new EventEmitter() as EventEmitter & { unref(): void };
-  child.unref = () => undefined;
-  assert.equal(openBrowser("https://example.com", () => child as never), true);
-  child.emit("error", new Error("missing opener"));
+  const openedChild = new EventEmitter() as EventEmitter & { unref(): void };
+  openedChild.unref = () => undefined;
+  const opened = openBrowser("https://example.com", () => openedChild as never);
+  openedChild.emit("spawn");
+  assert.equal(await opened, true);
+
+  const failedChild = new EventEmitter() as EventEmitter & { unref(): void };
+  failedChild.unref = () => undefined;
+  const failed = openBrowser("https://example.com", () => failedChild as never);
+  failedChild.emit("error", new Error("missing opener"));
+  assert.equal(await failed, false);
+  assert.equal(await openBrowser("https://example.com", () => { throw new Error("spawn failed"); }), false);
 
   const originalArgs = process.argv;
   process.argv = ["node", "script", "--route", "--open"];

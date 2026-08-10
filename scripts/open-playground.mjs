@@ -1,6 +1,7 @@
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_DEMO_BASE_URL = "https://app.silmaril.dev";
 const ROUTES = { setup: "/demo/setup-complete", playground: "/demo/playground" };
@@ -78,4 +79,12 @@ async function main() {
   if (hasFlag("--open") && !openBrowser(url)) process.exitCode = 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+function isMainModule() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) await main();

@@ -48,7 +48,7 @@ type Evaluation = { result: ClassificationResult; blocked: boolean };
 
 export class PiFirewallRuntime {
   private client: FirewallClient | undefined;
-  private clientKey: string | undefined;
+  private clientOptions: Pick<RuntimeConfig, "apiKey" | "apiUrl" | "timeoutMs"> | undefined;
 
   constructor(
     private readonly pi: PiHost,
@@ -160,7 +160,7 @@ export class PiFirewallRuntime {
         }),
       });
     } catch (error) {
-      debugLog(this.env, "classification_error", {
+      debugLog(config.debug, "classification_error", {
         eventName: input.eventName,
         ...safeErrorFields(error, [config.apiKey, config.apiUrl]),
       });
@@ -181,7 +181,7 @@ export class PiFirewallRuntime {
       policyDecision: blocked ? "block" : malicious ? "monitor" : "allow",
       nativeAction: blocked ? input.nativeAction : "allowed",
     });
-    debugLog(this.env, "classification_result", {
+    debugLog(config.debug, "classification_result", {
       eventName: input.eventName,
       hook: input.firewallHook,
       toolName: input.toolName,
@@ -192,15 +192,20 @@ export class PiFirewallRuntime {
   }
 
   private getClient(config: RuntimeConfig): FirewallClient {
-    const key = sha256(`${config.apiUrl}\u0000${config.apiKey}\u0000${config.timeoutMs}`);
-    if (this.client && this.clientKey === key) return this.client;
-    const client = new this.dependencies.firewallConstructor({
+    if (
+      this.client
+      && this.clientOptions?.apiKey === config.apiKey
+      && this.clientOptions.apiUrl === config.apiUrl
+      && this.clientOptions.timeoutMs === config.timeoutMs
+    ) return this.client;
+    const options = {
       apiKey: config.apiKey,
       apiUrl: config.apiUrl,
       timeoutMs: config.timeoutMs,
-    });
+    };
+    const client = new this.dependencies.firewallConstructor(options);
     this.client = client;
-    this.clientKey = key;
+    this.clientOptions = options;
     return client;
   }
 
@@ -261,13 +266,6 @@ function safeSessionId(ctx: ExtensionContext): string {
   }
 }
 
-function parseBoolean(value: unknown): boolean | undefined {
-  if (typeof value !== "string") return undefined;
-  if (/^(?:1|true|yes|on)$/iu.test(value.trim())) return true;
-  if (/^(?:0|false|no|off)$/iu.test(value.trim())) return false;
-  return undefined;
-}
-
 function omitUndefined(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
@@ -310,7 +308,7 @@ function safeErrorMessage(value: string, secrets: string[]): string | undefined 
   return message || undefined;
 }
 
-function debugLog(env: RuntimeEnv, event: string, fields: Record<string, unknown> = {}): void {
-  if (!(parseBoolean(env.SILMARIL_DEBUG) ?? false)) return;
+function debugLog(enabled: boolean, event: string, fields: Record<string, unknown> = {}): void {
+  if (!enabled) return;
   process.stderr.write(`[silmaril] ${JSON.stringify(omitUndefined({ event, ...fields }))}\n`);
 }

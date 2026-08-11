@@ -21,7 +21,7 @@ npm ci
 pi -e .
 ```
 
-The package is npm-ready but is not published to npm in v0.1.0. GitHub installation is the supported distribution path until a separate publish approval.
+The package is npm-ready but is not published to npm in v0.1.1. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 
@@ -38,9 +38,9 @@ The macOS app writes a private configuration file at `~/.pi/agent/silmaril-firew
 }
 ```
 
-The file must be a regular file owned by the current user with no group or world permissions. Symbolic links, files larger than 64 KiB, malformed JSON, and insecure permissions are ignored. `SILMARIL_CONFIG_PATH` can select a different private file.
+The file must be a regular file owned by the current user with no group or world permissions. Symbolic links, files larger than 64 KiB, malformed JSON, invalid recognized fields, and insecure permissions are rejected without falling back to ambient credentials. `SILMARIL_CONFIG_PATH` can select a different private file.
 
-Environment variables remain supported and override the corresponding file fields:
+Environment variables remain supported as a fallback when the private file is missing. When a valid private file exists, it is fully authoritative so stale process environment cannot disable protection, change its mode, or redirect classified content.
 
 ```sh
 export SILMARIL_API_URL="https://..."

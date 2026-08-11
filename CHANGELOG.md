@@ -2,7 +2,7 @@
 
 ## 0.1.1
 
-- Add private host-local JSON configuration with environment overrides.
+- Add authoritative private host-local JSON configuration with environment fallback when the file is missing.
 - Reject insecure, linked, oversized, or foreign-owned configuration files.
 
 ## 0.1.0

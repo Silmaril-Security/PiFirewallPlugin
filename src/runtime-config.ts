@@ -25,25 +25,43 @@ type FileConfig = {
   debug?: boolean;
 };
 
+type FileConfigResult =
+  | { state: "missing" }
+  | { state: "invalid" }
+  | { state: "valid"; config: FileConfig };
+
 export function resolveRuntimeConfig(env: RuntimeEnv = process.env): RuntimeConfig | undefined {
-  const file = readFileConfig(configurationPath(env));
-  const enabled = file?.enabled ?? parseBoolean(env.SILMARIL_ENABLED) ?? true;
+  const fileResult = readFileConfig(configurationPath(env));
+  if (fileResult.state === "invalid") return undefined;
+  if (fileResult.state === "valid") {
+    const file = fileResult.config;
+    const enabled = file.enabled ?? true;
+    if (!enabled) return undefined;
+    const apiKey = nonEmpty(file.apiKey);
+    const apiUrl = nonEmpty(file.apiUrl);
+    if (!apiKey || !apiUrl) return undefined;
+    return {
+      apiKey,
+      apiUrl,
+      timeoutMs: file.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      blockMalicious: file.blockMalicious ?? false,
+      debug: file.debug ?? false,
+    };
+  }
+
+  const enabled = parseBoolean(env.SILMARIL_ENABLED) ?? true;
   if (!enabled) return undefined;
 
-  const apiKey = nonEmpty(file?.apiKey) ?? nonEmpty(env.SILMARIL_API_KEY);
-  const apiUrl = nonEmpty(file?.apiUrl) ?? nonEmpty(env.SILMARIL_API_URL);
+  const apiKey = nonEmpty(env.SILMARIL_API_KEY);
+  const apiUrl = nonEmpty(env.SILMARIL_API_URL);
   if (!apiKey || !apiUrl) return undefined;
 
   return {
     apiKey,
     apiUrl,
-    timeoutMs: integerInRange(file?.timeoutMs)
-      ?? integerInRange(env.SILMARIL_TIMEOUT_MS)
-      ?? DEFAULT_TIMEOUT_MS,
-    blockMalicious: file?.blockMalicious
-      ?? parseBoolean(env.SILMARIL_BLOCK_MALICIOUS)
-      ?? false,
-    debug: parseBoolean(env.SILMARIL_DEBUG) ?? file?.debug ?? false,
+    timeoutMs: integerInRange(env.SILMARIL_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS,
+    blockMalicious: parseBoolean(env.SILMARIL_BLOCK_MALICIOUS) ?? false,
+    debug: parseBoolean(env.SILMARIL_DEBUG) ?? false,
   };
 }
 
@@ -52,33 +70,65 @@ export function configurationPath(env: RuntimeEnv = process.env): string {
     ?? join(homedir(), ".pi", "agent", "silmaril-firewall.json");
 }
 
-function readFileConfig(path: string): FileConfig | undefined {
+function readFileConfig(path: string): FileConfigResult {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const metadata = fstatSync(descriptor);
     if (!metadata.isFile() || metadata.size > MAX_CONFIG_BYTES || (metadata.mode & 0o077) !== 0) {
-      return undefined;
+      return { state: "invalid" };
     }
     if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
-      return undefined;
+      return { state: "invalid" };
     }
     const parsed: unknown = JSON.parse(readFileSync(descriptor, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { state: "invalid" };
+    }
     const record = parsed as Record<string, unknown>;
+    const enabled = booleanValue(record.enabled);
+    const apiKey = stringValue(record.apiKey);
+    const apiUrl = stringValue(record.apiUrl);
+    const timeoutMs = typeof record.timeoutMs === "number"
+      ? integerInRange(record.timeoutMs)
+      : undefined;
+    const blockMalicious = booleanValue(record.blockMalicious);
+    const debug = booleanValue(record.debug);
+    if (
+      (Object.hasOwn(record, "enabled") && enabled === undefined)
+      || (Object.hasOwn(record, "apiKey") && apiKey === undefined)
+      || (Object.hasOwn(record, "apiUrl") && apiUrl === undefined)
+      || (Object.hasOwn(record, "timeoutMs") && timeoutMs === undefined)
+      || (Object.hasOwn(record, "blockMalicious") && blockMalicious === undefined)
+      || (Object.hasOwn(record, "debug") && debug === undefined)
+    ) {
+      return { state: "invalid" };
+    }
     return {
-      enabled: booleanValue(record.enabled),
-      apiKey: stringValue(record.apiKey),
-      apiUrl: stringValue(record.apiUrl),
-      timeoutMs: numberValue(record.timeoutMs),
-      blockMalicious: booleanValue(record.blockMalicious),
-      debug: booleanValue(record.debug),
+      state: "valid",
+      config: {
+        ...(enabled === undefined ? {} : { enabled }),
+        ...(apiKey === undefined ? {} : { apiKey }),
+        ...(apiUrl === undefined ? {} : { apiUrl }),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(blockMalicious === undefined ? {} : { blockMalicious }),
+        ...(debug === undefined ? {} : { debug }),
+      },
     };
-  } catch {
-    return undefined;
+  } catch (error) {
+    return isMissingFileError(error)
+      ? { state: "missing" }
+      : { state: "invalid" };
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error !== null
+    && typeof error === "object"
+    && "code" in error
+    && error.code === "ENOENT";
 }
 
 function integerInRange(value: unknown): number | undefined {
@@ -106,10 +156,6 @@ function nonEmpty(value: unknown): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
 }
 
 function booleanValue(value: unknown): boolean | undefined {

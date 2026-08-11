@@ -132,8 +132,31 @@ test("runtime configuration treats a private host file as authoritative", async 
     debug: true,
   });
 
+  await writeFile(configPath, JSON.stringify({
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+  }), { mode: 0o600 });
+  assert.deepEqual(resolveRuntimeConfig({
+    SILMARIL_CONFIG_PATH: configPath,
+    SILMARIL_ENABLED: "false",
+    SILMARIL_API_KEY: "stale-key",
+    SILMARIL_API_URL: "https://stale.example/classify",
+    SILMARIL_TIMEOUT_MS: "9000",
+    SILMARIL_BLOCK_MALICIOUS: "true",
+    SILMARIL_DEBUG: "true",
+  }), {
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+    timeoutMs: 2500,
+    blockMalicious: false,
+    debug: false,
+  });
+
   await chmod(configPath, 0o644);
-  assert.equal(resolveRuntimeConfig({ SILMARIL_CONFIG_PATH: configPath }), undefined);
+  assert.equal(resolveRuntimeConfig({
+    ...BASE_ENV,
+    SILMARIL_CONFIG_PATH: configPath,
+  }), undefined);
   await chmod(configPath, 0o600);
   const symlinkPath = path.join(root, "linked.json");
   await symlink(configPath, symlinkPath);
@@ -245,14 +268,18 @@ test("network, timeout, SDK, configuration, malformed-response, and evidence fai
 
 test("SDK client is cached per runtime and failed construction remains retryable", async () => {
   const calls: any[] = [];
+  const env = { ...BASE_ENV };
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
-    BASE_ENV,
-    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
+    env,
+    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
   );
   await runtime.handleInput(inputEvent("one"), context());
   await runtime.handleInput(inputEvent("two"), context());
   assert.equal(calls.filter((call) => Object.hasOwn(call, "constructor")).length, 1);
+  env.SILMARIL_API_KEY = "rotated-key";
+  await runtime.handleInput(inputEvent("three"), context());
+  assert.equal(calls.filter((call) => Object.hasOwn(call, "constructor")).length, 2);
 
   let attempts = 0;
   class RetryableFirewall {

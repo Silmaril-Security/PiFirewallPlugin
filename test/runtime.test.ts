@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, stat, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,7 +12,13 @@ import { buildLocalProtectionEvent, writeLocalProtectionEvent } from "../src/loc
 import { PiFirewallRuntime, extractTextContent, resolveRuntimeConfig, stableStringify } from "../src/runtime.ts";
 import { buildDemoStatus, buildDemoUrl, normalizeBaseUrl, openBrowser, optionValue } from "../scripts/open-playground.mjs";
 
+const NO_CONFIG_PATH = path.join(
+  os.tmpdir(),
+  "silmaril-pi-tests-no-user-config",
+  "missing.json",
+);
 const BASE_ENV = {
+  SILMARIL_CONFIG_PATH: NO_CONFIG_PATH,
   SILMARIL_API_KEY: "test-key",
   SILMARIL_API_URL: "https://firewall.example/classify",
   SILMARIL_TIMEOUT_MS: "2500",
@@ -83,8 +89,8 @@ function assistantMessage(text = "assistant output"): MessageEndEvent {
   } as MessageEndEvent;
 }
 
-test("runtime configuration is environment-only and defaults safely", () => {
-  assert.equal(resolveRuntimeConfig({}), undefined);
+test("runtime configuration defaults safely", () => {
+  assert.equal(resolveRuntimeConfig({ SILMARIL_CONFIG_PATH: NO_CONFIG_PATH }), undefined);
   assert.deepEqual(resolveRuntimeConfig(BASE_ENV), {
     apiKey: "test-key",
     apiUrl: "https://firewall.example/classify",
@@ -94,6 +100,67 @@ test("runtime configuration is environment-only and defaults safely", () => {
   });
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_TIMEOUT_MS: "10001" })?.timeoutMs, 2500);
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "on" })?.blockMalicious, true);
+});
+
+test("runtime configuration treats a private host file as authoritative", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-config-"));
+  const configPath = path.join(root, "silmaril-firewall.json");
+  await writeFile(configPath, JSON.stringify({
+    enabled: true,
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+    timeoutMs: 375,
+    blockMalicious: true,
+    debug: true,
+  }), { mode: 0o600 });
+  assert.deepEqual(resolveRuntimeConfig({ SILMARIL_CONFIG_PATH: configPath }), {
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+    timeoutMs: 375,
+    blockMalicious: true,
+    debug: true,
+  });
+  assert.deepEqual(resolveRuntimeConfig({
+    SILMARIL_CONFIG_PATH: configPath,
+    SILMARIL_API_KEY: "environment-key",
+    SILMARIL_BLOCK_MALICIOUS: "false",
+  }), {
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+    timeoutMs: 375,
+    blockMalicious: true,
+    debug: true,
+  });
+
+  await writeFile(configPath, JSON.stringify({
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+  }), { mode: 0o600 });
+  assert.deepEqual(resolveRuntimeConfig({
+    SILMARIL_CONFIG_PATH: configPath,
+    SILMARIL_ENABLED: "false",
+    SILMARIL_API_KEY: "stale-key",
+    SILMARIL_API_URL: "https://stale.example/classify",
+    SILMARIL_TIMEOUT_MS: "9000",
+    SILMARIL_BLOCK_MALICIOUS: "true",
+    SILMARIL_DEBUG: "true",
+  }), {
+    apiKey: "file-key",
+    apiUrl: "https://file.example/classify",
+    timeoutMs: 2500,
+    blockMalicious: false,
+    debug: false,
+  });
+
+  await chmod(configPath, 0o644);
+  assert.equal(resolveRuntimeConfig({
+    ...BASE_ENV,
+    SILMARIL_CONFIG_PATH: configPath,
+  }), undefined);
+  await chmod(configPath, 0o600);
+  const symlinkPath = path.join(root, "linked.json");
+  await symlink(configPath, symlinkPath);
+  assert.equal(resolveRuntimeConfig({ SILMARIL_CONFIG_PATH: symlinkPath }), undefined);
 });
 
 test("the pinned SDK receives the configured timeoutMs option", () => {
@@ -201,14 +268,18 @@ test("network, timeout, SDK, configuration, malformed-response, and evidence fai
 
 test("SDK client is cached per runtime and failed construction remains retryable", async () => {
   const calls: any[] = [];
+  const env = { ...BASE_ENV };
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
-    BASE_ENV,
-    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
+    env,
+    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
   );
   await runtime.handleInput(inputEvent("one"), context());
   await runtime.handleInput(inputEvent("two"), context());
   assert.equal(calls.filter((call) => Object.hasOwn(call, "constructor")).length, 1);
+  env.SILMARIL_API_KEY = "rotated-key";
+  await runtime.handleInput(inputEvent("three"), context());
+  assert.equal(calls.filter((call) => Object.hasOwn(call, "constructor")).length, 2);
 
   let attempts = 0;
   class RetryableFirewall {
@@ -254,7 +325,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-evidence-"));
   const event = buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.1.1",
     hook: "tool_result",
     mode: "block",
     requestId: "raw-request-id",
@@ -306,7 +377,7 @@ test("demo launcher is credential-safe", async () => {
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "0.1.0");
+  assert.equal(packageJson.version, "0.1.1");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

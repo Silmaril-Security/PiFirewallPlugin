@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Add private host-local JSON configuration with environment overrides.
+- Reject insecure, linked, oversized, or foreign-owned configuration files.
+
 ## 0.1.0
 
 - Initial public Pi package.

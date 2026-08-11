@@ -29,6 +29,7 @@ test("pi -e . loads the extension and blocks against a mock Firewall endpoint", 
       cwd: process.cwd(),
       env: {
         ...process.env,
+        SILMARIL_CONFIG_PATH: path.join(evidenceDirectory, "missing-config.json"),
         SILMARIL_API_KEY: "test-key",
         SILMARIL_API_URL: `http://127.0.0.1:${address.port}`,
         SILMARIL_BLOCK_MALICIOUS: "true",

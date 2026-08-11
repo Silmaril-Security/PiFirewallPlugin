@@ -12,8 +12,8 @@ All handler failures are caught. This is especially important for `tool_call`, b
 
 Raw lifecycle content is sent only to the configured Firewall endpoint through the SDK. It is never written to logs or evidence. Assistant `message_end` extracts visible text only, excluding reasoning and tool-call parts already handled elsewhere. Tool-result replacement removes the flagged content and details before subsequent handlers and the model consume the patched result.
 
-The cached SDK client exists only inside the Pi process and is recreated when configuration changes. Failed construction is not cached.
+The cached SDK client exists only inside the Pi process and is recreated when configuration changes. Failed construction is not cached. Credentials come from a private user-owned configuration file or environment overrides. The runtime rejects symbolic links, oversized files, non-regular files, files owned by another user, and files with group or world permissions.
 
 ## Rollback
 
-Set `SILMARIL_BLOCK_MALICIOUS=false` for immediate observational behavior. Use `pi remove git:github.com/Silmaril-Security/PiFirewallPlugin` to remove an installed GitHub package.
+Set `blockMalicious` to `false` for immediate observational behavior, or set `enabled` to `false` to disable classification without removing the package. Use `pi remove git:github.com/Silmaril-Security/PiFirewallPlugin` to remove an installed GitHub package.

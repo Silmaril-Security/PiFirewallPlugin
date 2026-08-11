@@ -17,16 +17,19 @@ import {
   type LocalProtectionEventV1,
   type ProtectionHook,
 } from "./local-evidence.ts";
+import {
+  resolveRuntimeConfig,
+  type RuntimeConfig,
+  type RuntimeEnv,
+} from "./runtime-config.ts";
+
+export { configurationPath, resolveRuntimeConfig } from "./runtime-config.ts";
 
 export const PLUGIN_NAME = "pi-firewall-plugin";
-export const PLUGIN_VERSION = "0.1.0";
-const DEFAULT_TIMEOUT_MS = 2500;
-const MIN_TIMEOUT_MS = 250;
-const MAX_TIMEOUT_MS = 10_000;
+export const PLUGIN_VERSION = "0.1.1";
 const SAFE_BLOCK_MESSAGE = "Silmaril Firewall blocked potentially malicious content.";
 
-type RuntimeEnv = Record<string, string | undefined>;
-export type RuntimeConfig = { apiKey: string; apiUrl: string; timeoutMs: number; blockMalicious: boolean; debug: boolean };
+export type { RuntimeConfig } from "./runtime-config.ts";
 type ClassificationResult = Record<string, unknown>;
 type FirewallClient = {
   classify(text: string, options?: { hook?: string; toolName?: string; metadata?: Record<string, unknown>; requestId?: string }): Promise<ClassificationResult>;
@@ -157,7 +160,10 @@ export class PiFirewallRuntime {
         }),
       });
     } catch (error) {
-      debugLog(this.env, "classification_error", { eventName: input.eventName, ...safeErrorFields(error) });
+      debugLog(this.env, "classification_error", {
+        eventName: input.eventName,
+        ...safeErrorFields(error, [config.apiKey, config.apiUrl]),
+      });
       return undefined;
     }
 
@@ -220,19 +226,6 @@ export class PiFirewallRuntime {
   }
 }
 
-export function resolveRuntimeConfig(env: RuntimeEnv): RuntimeConfig | undefined {
-  const apiKey = env.SILMARIL_API_KEY?.trim();
-  const apiUrl = env.SILMARIL_API_URL?.trim();
-  if (!apiKey || !apiUrl) return undefined;
-  return {
-    apiKey,
-    apiUrl,
-    timeoutMs: integerInRange(env.SILMARIL_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS,
-    blockMalicious: parseBoolean(env.SILMARIL_BLOCK_MALICIOUS) ?? false,
-    debug: parseBoolean(env.SILMARIL_DEBUG) ?? false,
-  };
-}
-
 export function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content.trim();
   if (!Array.isArray(content)) return "";
@@ -268,12 +261,6 @@ function safeSessionId(ctx: ExtensionContext): string {
   }
 }
 
-function integerInRange(value: unknown, minimum: number, maximum: number): number | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : undefined;
-}
-
 function parseBoolean(value: unknown): boolean | undefined {
   if (typeof value !== "string") return undefined;
   if (/^(?:1|true|yes|on)$/iu.test(value.trim())) return true;
@@ -289,8 +276,38 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function safeErrorFields(error: unknown): Record<string, unknown> {
-  return error instanceof Error ? { errorName: error.name, errorCode: typeof (error as Error & { code?: unknown }).code === "string" ? (error as Error & { code: string }).code : undefined } : {};
+function safeErrorFields(error: unknown, secrets: string[] = []): Record<string, unknown> {
+  if (!(error instanceof Error)) return {};
+  const cause = (error as Error & { cause?: unknown }).cause;
+  const causeRecord = cause && typeof cause === "object"
+    ? cause as { code?: unknown; message?: unknown; name?: unknown }
+    : undefined;
+  return {
+    errorName: error.name,
+    errorCode: typeof (error as Error & { code?: unknown }).code === "string"
+      ? (error as Error & { code: string }).code
+      : undefined,
+    errorMessage: safeErrorMessage(error.message, secrets),
+    causeName: typeof causeRecord?.name === "string" ? causeRecord.name : undefined,
+    causeCode: typeof causeRecord?.code === "string" ? causeRecord.code : undefined,
+    causeMessage: typeof causeRecord?.message === "string"
+      ? safeErrorMessage(causeRecord.message, secrets)
+      : undefined,
+  };
+}
+
+function safeErrorMessage(value: string, secrets: string[]): string | undefined {
+  let message = value;
+  for (const secret of secrets.filter(Boolean)) {
+    message = message.split(secret).join("[redacted]");
+  }
+  message = message
+    .replace(/\b(?:sfw|sk)-[A-Za-z0-9_-]{12,}\b/gu, "[redacted]")
+    .replace(/https?:\/\/[^\s"']+/gu, "[url]")
+    .replace(/[\r\n\t]+/gu, " ")
+    .trim()
+    .slice(0, 180);
+  return message || undefined;
 }
 
 function debugLog(env: RuntimeEnv, event: string, fields: Record<string, unknown> = {}): void {

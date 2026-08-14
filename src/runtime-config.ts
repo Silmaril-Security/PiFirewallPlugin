@@ -11,6 +11,7 @@ export type RuntimeEnv = Record<string, string | undefined>;
 export type RuntimeConfig = {
   apiKey: string;
   apiUrl: string;
+  endpointId?: string;
   timeoutMs: number;
   blockMalicious: boolean;
   debug: boolean;
@@ -20,6 +21,7 @@ type FileConfig = {
   enabled?: boolean;
   apiKey?: string;
   apiUrl?: string;
+  endpointId?: string;
   timeoutMs?: number;
   blockMalicious?: boolean;
   debug?: boolean;
@@ -40,9 +42,11 @@ export function resolveRuntimeConfig(env: RuntimeEnv = process.env): RuntimeConf
     const apiKey = nonEmpty(file.apiKey);
     const apiUrl = nonEmpty(file.apiUrl);
     if (!apiKey || !apiUrl) return undefined;
+    const configuredEndpointId = endpointId(file.endpointId);
     return {
       apiKey,
       apiUrl,
+      ...(configuredEndpointId ? { endpointId: configuredEndpointId } : {}),
       timeoutMs: file.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       blockMalicious: file.blockMalicious ?? false,
       debug: file.debug ?? false,
@@ -55,10 +59,12 @@ export function resolveRuntimeConfig(env: RuntimeEnv = process.env): RuntimeConf
   const apiKey = nonEmpty(env.SILMARIL_API_KEY);
   const apiUrl = nonEmpty(env.SILMARIL_API_URL);
   if (!apiKey || !apiUrl) return undefined;
+  const configuredEndpointId = endpointId(env.SILMARIL_ENDPOINT_ID);
 
   return {
     apiKey,
     apiUrl,
+    ...(configuredEndpointId ? { endpointId: configuredEndpointId } : {}),
     timeoutMs: integerInRange(env.SILMARIL_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS,
     blockMalicious: parseBoolean(env.SILMARIL_BLOCK_MALICIOUS) ?? false,
     debug: parseBoolean(env.SILMARIL_DEBUG) ?? false,
@@ -89,6 +95,7 @@ function readFileConfig(path: string): FileConfigResult {
     const enabled = booleanValue(record.enabled);
     const apiKey = stringValue(record.apiKey);
     const apiUrl = stringValue(record.apiUrl);
+    const endpointIdValue = stringValue(record.endpointId);
     const timeoutMs = typeof record.timeoutMs === "number"
       ? integerInRange(record.timeoutMs)
       : undefined;
@@ -110,6 +117,7 @@ function readFileConfig(path: string): FileConfigResult {
         ...(enabled === undefined ? {} : { enabled }),
         ...(apiKey === undefined ? {} : { apiKey }),
         ...(apiUrl === undefined ? {} : { apiUrl }),
+        ...(endpointIdValue === undefined ? {} : { endpointId: endpointIdValue }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(blockMalicious === undefined ? {} : { blockMalicious }),
         ...(debug === undefined ? {} : { debug }),
@@ -156,6 +164,13 @@ function nonEmpty(value: unknown): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function endpointId(value: unknown): string | undefined {
+  const candidate = nonEmpty(value);
+  return candidate && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidate)
+    ? candidate
+    : undefined;
 }
 
 function booleanValue(value: unknown): boolean | undefined {

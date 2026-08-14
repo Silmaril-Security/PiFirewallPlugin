@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Add app-managed endpoint and harness provenance to every Firewall request.
+
 ## 0.1.1
 
 - Add authoritative private host-local JSON configuration with environment fallback when the file is missing.

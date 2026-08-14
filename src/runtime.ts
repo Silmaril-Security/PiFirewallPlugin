@@ -26,7 +26,7 @@ import {
 export { configurationPath, resolveRuntimeConfig } from "./runtime-config.ts";
 
 export const PLUGIN_NAME = "pi-firewall-plugin";
-export const PLUGIN_VERSION = "0.1.1";
+export const PLUGIN_VERSION = "0.1.2";
 const SAFE_BLOCK_MESSAGE = "Silmaril Firewall blocked potentially malicious content.";
 
 export type { RuntimeConfig } from "./runtime-config.ts";
@@ -151,13 +151,13 @@ export class PiFirewallRuntime {
         hook: input.firewallHook,
         ...(input.toolName ? { toolName: input.toolName } : {}),
         requestId,
-        metadata: omitUndefined({
+        metadata: withProvenance(omitUndefined({
           silmaril: { integration: PLUGIN_NAME, version: PLUGIN_VERSION },
           piEvent: input.eventName,
           conversationId: sessionId,
           toolName: input.toolName,
           mode: input.ctx.mode,
-        }),
+        }), config.endpointId),
       });
     } catch (error) {
       debugLog(config.debug, "classification_error", {
@@ -229,6 +229,23 @@ export class PiFirewallRuntime {
       // A notice failure must not re-submit blocked input.
     }
   }
+}
+
+export function withProvenance(metadata: Record<string, unknown>, endpointId?: string): Record<string, unknown> {
+  const existingSilmaril = metadata.silmaril && typeof metadata.silmaril === "object" && !Array.isArray(metadata.silmaril)
+    ? metadata.silmaril as Record<string, unknown>
+    : {};
+  return {
+    ...metadata,
+    silmaril: {
+      ...existingSilmaril,
+      provenance: {
+        schema_version: 1,
+        ...(endpointId ? { endpoint_id: endpointId } : {}),
+        harness: "pi",
+      },
+    },
+  };
 }
 
 export function extractTextContent(content: unknown): string {

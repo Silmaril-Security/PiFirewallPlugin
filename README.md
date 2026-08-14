@@ -21,7 +21,7 @@ npm ci
 pi -e .
 ```
 
-The package is npm-ready but is not published to npm in v0.1.1. GitHub installation is the supported distribution path until a separate publish approval.
+The package is npm-ready but is not published to npm in v0.1.2. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 
@@ -32,6 +32,7 @@ The macOS app writes a private configuration file at `~/.pi/agent/silmaril-firew
   "enabled": true,
   "apiUrl": "https://...",
   "apiKey": "...",
+  "endpointId": "2b64e603-f82a-4aec-9524-9736472dc80a",
   "timeoutMs": 2500,
   "blockMalicious": false,
   "debug": false
@@ -45,6 +46,7 @@ Environment variables remain supported as a fallback when the private file is mi
 ```sh
 export SILMARIL_API_URL="https://..."
 export SILMARIL_API_KEY="..."
+export SILMARIL_ENDPOINT_ID="2b64e603-f82a-4aec-9524-9736472dc80a"
 export SILMARIL_TIMEOUT_MS="2500"
 export SILMARIL_BLOCK_MALICIOUS="false"
 export SILMARIL_DEBUG="false"
@@ -54,6 +56,8 @@ export SILMARIL_ENABLED="true"
 `SILMARIL_TIMEOUT_MS` accepts `250` through `10000`. Missing or insecure configuration, malformed event data, invalid classifier responses, SDK construction, network errors, timeouts, and local evidence failures fail open. Every Pi handler catches failures internally so Pi's fail-safe `tool_call` error semantics cannot accidentally turn a Firewall outage into a tool block.
 
 `SILMARIL_DEBUG=true` writes metadata-only summaries to stderr. Raw prompts, assistant text, reasoning, tool arguments, and tool results are never logged.
+
+Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If the app-provided canonical UUID v4 is absent, the plugin continues with harness-only provenance.
 
 ## Coverage
 

@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolC
 
 import registerExtension from "../extensions/firewall.ts";
 import { buildLocalProtectionEvent, writeLocalProtectionEvent } from "../src/local-evidence.ts";
-import { PiFirewallRuntime, extractTextContent, resolveRuntimeConfig, stableStringify } from "../src/runtime.ts";
+import { PiFirewallRuntime, extractTextContent, resolveRuntimeConfig, stableStringify, withProvenance } from "../src/runtime.ts";
 import { buildDemoStatus, buildDemoUrl, normalizeBaseUrl, openBrowser, optionValue } from "../scripts/open-playground.mjs";
 
 const NO_CONFIG_PATH = path.join(
@@ -100,6 +100,31 @@ test("runtime configuration defaults safely", () => {
   });
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_TIMEOUT_MS: "10001" })?.timeoutMs, 2500);
   assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "on" })?.blockMalicious, true);
+  assert.equal(resolveRuntimeConfig({
+    ...BASE_ENV,
+    SILMARIL_ENDPOINT_ID: "2b64e603-f82a-4aec-9524-9736472dc80a",
+  })?.endpointId, "2b64e603-f82a-4aec-9524-9736472dc80a");
+  assert.equal(resolveRuntimeConfig({ ...BASE_ENV, SILMARIL_ENDPOINT_ID: "NOT-A-UUID" })?.endpointId, undefined);
+});
+
+test("plugin-owned provenance overwrites caller values and preserves unrelated metadata", () => {
+  assert.deepEqual(withProvenance({
+    trace: "keep",
+    silmaril: { integration: "pi-firewall-plugin", provenance: { endpoint_id: "spoofed", harness: "spoofed" } },
+  }, "2b64e603-f82a-4aec-9524-9736472dc80a"), {
+    trace: "keep",
+    silmaril: {
+      integration: "pi-firewall-plugin",
+      provenance: {
+        schema_version: 1,
+        endpoint_id: "2b64e603-f82a-4aec-9524-9736472dc80a",
+        harness: "pi",
+      },
+    },
+  });
+  assert.deepEqual(withProvenance({}), {
+    silmaril: { provenance: { schema_version: 1, harness: "pi" } },
+  });
 });
 
 test("runtime configuration treats a private host file as authoritative", async () => {
@@ -202,6 +227,7 @@ test("shadow mode observes all native boundaries without mutation", async () => 
   assert.equal(await runtime.handleToolResult(toolResult("raw result"), context()), undefined);
   assert.equal(await runtime.handleMessageEnd(assistantMessage("raw output"), context()), undefined);
   assert.deepEqual(calls.filter((call) => call.text).map((call) => call.options.hook), ["user_input", "tool_call", "tool_response", "llm_output"]);
+  assert.ok(calls.filter((call) => call.text).every((call) => call.options.metadata.silmaril.provenance.harness === "pi"));
   assert.ok(events.every((event) => event.policyDecision === "monitor" && event.mode === "shadow"));
   assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output|private reasoning/u);
 });
@@ -325,7 +351,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-evidence-"));
   const event = buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",
-    pluginVersion: "0.1.1",
+    pluginVersion: "0.1.2",
     hook: "tool_result",
     mode: "block",
     requestId: "raw-request-id",
@@ -377,7 +403,7 @@ test("demo launcher is credential-safe", async () => {
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "0.1.1");
+  assert.equal(packageJson.version, "0.1.2");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

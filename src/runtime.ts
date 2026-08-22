@@ -268,12 +268,12 @@ export function effectiveMode(
   requestedMode?: FirewallMode,
 ): FirewallMode {
   // A supplied mode is the per-request pilot override. The backend-returned
-  // mode is authoritative only when this request remained backend-controlled.
-  if (requestedMode) return requestedMode;
+  // mode controls backend-managed requests. A contract mismatch must never
+  // downgrade Block in either direction.
   const returned = result.mode;
-  return returned === "shadow" || returned === "warn" || returned === "block"
-    ? returned
-    : "shadow";
+  if (requestedMode === "block" || returned === "block") return "block";
+  if (requestedMode) return requestedMode;
+  return returned === "shadow" || returned === "warn" ? returned : "shadow";
 }
 
 export function withProvenance(metadata: Record<string, unknown>, endpointId?: string): Record<string, unknown> {

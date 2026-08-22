@@ -2,7 +2,7 @@
 
 Silmaril Firewall lifecycle protection for Pi coding agents.
 
-This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow mode is the default and never changes Pi behavior. Block mode acts only on the exact SDK prediction `MALICIOUS`.
+This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled or block responses only for the exact SDK prediction `MALICIOUS`. Completed content is never replaced.
 
 ## Install
 
@@ -21,7 +21,7 @@ npm ci
 pi -e .
 ```
 
-The package is npm-ready but is not published to npm in v0.1.2. GitHub installation is the supported distribution path until a separate publish approval.
+The package is npm-ready but is not published to npm in v0.2.0. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 
@@ -34,7 +34,7 @@ The macOS app writes a private configuration file at `~/.pi/agent/silmaril-firew
   "apiKey": "...",
   "endpointId": "2b64e603-f82a-4aec-9524-9736472dc80a",
   "timeoutMs": 2500,
-  "blockMalicious": false,
+  "mode": "warn",
   "debug": false
 }
 ```
@@ -65,8 +65,8 @@ Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If
 | --- | --- | --- | --- |
 | `input` | `user_input` | Continue | Return `handled` and show a bounded notice |
 | `tool_call` | `tool_call` | Continue | Return Pi's native tool block response |
-| `tool_result` | `tool_response` | Preserve result | Replace content/details and mark it as an error |
-| assistant `message_end` | `llm_output` | Preserve message | Replace finalized assistant content |
+| `tool_result` | `tool_response` | Preserve result | Preserve result and record `block_unavailable` |
+| assistant `message_end` | `llm_output` | Preserve message | Preserve finalized content and record `block_unavailable` |
 
 Input with `source === "extension"` is always ignored to prevent feedback loops. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
 
@@ -74,7 +74,7 @@ Pi-specific subagent packages, worker adapters, and delegation semantics are not
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Set `SILMARIL_BLOCK_MALICIOUS=true` to enable host-native enforcement. Casing variants and unknown predictions never block.
+Shadow mode returns no Pi mutation. Omit mode to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. Casing variants and unknown predictions never block.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Stable logical request IDs use Pi's session ID and host event identity; no process-global synthetic counter is used.
 

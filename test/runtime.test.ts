@@ -95,6 +95,7 @@ test("runtime configuration defaults safely", () => {
     apiKey: "test-key",
     apiUrl: "https://firewall.example/classify",
     timeoutMs: 2500,
+    mode: "shadow",
     blockMalicious: false,
     debug: false,
   });
@@ -135,6 +136,7 @@ test("runtime configuration treats a private host file as authoritative", async 
     apiKey: "file-key",
     apiUrl: "https://file.example/classify",
     timeoutMs: 375,
+    mode: "block",
     blockMalicious: true,
     debug: true,
   }), { mode: 0o600 });
@@ -142,6 +144,7 @@ test("runtime configuration treats a private host file as authoritative", async 
     apiKey: "file-key",
     apiUrl: "https://file.example/classify",
     timeoutMs: 375,
+    mode: "block",
     blockMalicious: true,
     debug: true,
   });
@@ -153,6 +156,7 @@ test("runtime configuration treats a private host file as authoritative", async 
     apiKey: "file-key",
     apiUrl: "https://file.example/classify",
     timeoutMs: 375,
+    mode: "block",
     blockMalicious: true,
     debug: true,
   });
@@ -232,22 +236,43 @@ test("shadow mode observes all native boundaries without mutation", async () => 
   assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output|private reasoning/u);
 });
 
-test("block mode uses Pi-native handled, block, and replacement responses", async () => {
+test("block mode uses Pi-native handled and block without replacement responses", async () => {
   const notifications: string[] = [];
+  const events: any[] = [];
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
-    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS" }))),
+    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS" })), events),
   );
   assert.deepEqual(await runtime.handleInput(inputEvent("input"), context(notifications)), { action: "handled" });
   assert.match(notifications[0] ?? "", /blocked potentially malicious/u);
   assert.deepEqual(await runtime.handleToolCall(toolCall(), context()), { block: true, reason: "Silmaril Firewall blocked potentially malicious content." });
   const resultPatch = await runtime.handleToolResult(toolResult(), context());
-  assert.equal(resultPatch?.content?.[0]?.type, "text");
-  assert.equal(resultPatch?.isError, true);
+  assert.equal(resultPatch, undefined);
   const messagePatch = await runtime.handleMessageEnd(assistantMessage(), context());
-  assert.equal(messagePatch?.message?.role, "assistant");
-  assert.equal((messagePatch?.message as any).content.length, 1);
+  assert.equal(messagePatch, undefined);
+  assert.equal(events[2].blockUnavailable, true);
+  assert.equal(events[3].blockUnavailable, true);
+});
+
+test("warn mode surfaces bounded same-turn context where Pi supports it", async () => {
+  const messages: any[] = [];
+  const events: any[] = [];
+  const runtime = new PiFirewallRuntime(
+    { sendMessage: (message, options) => { messages.push({ message, options }); } },
+    { ...BASE_ENV, SILMARIL_MODE: "warn" },
+    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS", mode: "warn", score: 0.99 })), events),
+  );
+  const transformed = await runtime.handleInput(inputEvent("raw input"), context());
+  assert.equal(transformed.action, "transform");
+  assert.match(transformed.action === "transform" ? transformed.text : "", /^Silmaril Firewall warning:/u);
+  assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
+  assert.equal(await runtime.handleToolResult(toolResult("raw result"), context()), undefined);
+  assert.equal(await runtime.handleMessageEnd(assistantMessage("raw output"), context()), undefined);
+  assert.equal(messages.length, 2);
+  assert.ok(messages.every(({ message }) => message.display === false && !message.content.includes("raw")));
+  assert.deepEqual(events.map((event) => event.warnDelivery), ["delivered", "delivered", "delivered", "unsupported"]);
+  assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output/u);
 });
 
 test("only exact uppercase MALICIOUS enforces", async () => {
@@ -351,7 +376,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-evidence-"));
   const event = buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",
-    pluginVersion: "0.1.2",
+    pluginVersion: "0.2.0",
     hook: "tool_result",
     mode: "block",
     requestId: "raw-request-id",
@@ -359,7 +384,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
     toolName: "bash",
     classification: { prediction: "MALICIOUS", primaryOutcome: "code_execution", raw: "must-not-leak" },
     policyDecision: "block",
-    nativeAction: "content_replaced",
+    nativeAction: "block_returned",
   });
   const destination = await writeLocalProtectionEvent(event, { SILMARIL_LOCAL_EVENT_DIR: root });
   assert.ok(destination);
@@ -403,7 +428,7 @@ test("demo launcher is credential-safe", async () => {
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "0.1.2");
+  assert.equal(packageJson.version, "0.2.0");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

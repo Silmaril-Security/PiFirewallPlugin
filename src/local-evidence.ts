@@ -16,7 +16,7 @@ export type LocalProtectionEventV1 = {
   occurredAt: string;
   host: "pi";
   hook: ProtectionHook;
-  mode: "block" | "shadow";
+  mode: "block" | "warn" | "shadow";
   requestFingerprint?: string;
   sessionFingerprint?: string;
   toolDisplayName?: string;
@@ -25,8 +25,10 @@ export type LocalProtectionEventV1 = {
   prediction: "benign" | "malicious" | "unknown" | "unavailable";
   modelScore?: number;
   modelThreshold?: number;
-  policyDecision: "allow" | "monitor" | "block" | "unavailable";
-  nativeAction: "none" | "allowed" | "block_returned" | "content_replaced" | "failed" | "unavailable";
+  policyDecision: "allow" | "monitor" | "warn" | "block" | "unavailable";
+  nativeAction: "none" | "allowed" | "block_returned" | "warning_context_returned" | "failed" | "unavailable";
+  warnDelivery?: "delivered" | "unsupported";
+  blockUnavailable?: boolean;
   outcome: "not_observed";
   evidenceTruth: "plugin_reported" | "native_response_returned";
   evidenceCompleteness: "partial";
@@ -44,13 +46,15 @@ export type LocalEvidenceInput = {
   pluginName: string;
   pluginVersion: string;
   hook: ProtectionHook;
-  mode: "block" | "shadow";
+  mode: "block" | "warn" | "shadow";
   requestId?: string;
   sessionId?: string;
   toolName?: string;
   classification: Record<string, unknown>;
   policyDecision: LocalProtectionEventV1["policyDecision"];
   nativeAction: LocalProtectionEventV1["nativeAction"];
+  warnDelivery?: "delivered" | "unsupported";
+  blockUnavailable?: boolean;
   occurredAt?: Date;
 };
 
@@ -87,8 +91,10 @@ export function buildLocalProtectionEvent(input: LocalEvidenceInput): LocalProte
     modelThreshold: unitInterval(input.classification.threshold),
     policyDecision: input.policyDecision,
     nativeAction: input.nativeAction,
+    warnDelivery: input.warnDelivery,
+    blockUnavailable: input.blockUnavailable,
     outcome: "not_observed",
-    evidenceTruth: input.nativeAction === "block_returned" || input.nativeAction === "content_replaced" ? "native_response_returned" : "plugin_reported",
+    evidenceTruth: input.nativeAction === "block_returned" ? "native_response_returned" : "plugin_reported",
     evidenceCompleteness: "partial",
     provenance: {
       schemaVersion: 1,

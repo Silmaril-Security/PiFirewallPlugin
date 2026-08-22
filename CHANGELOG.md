@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Preserve the backend-selected effective mode by using TypeScript SDK 0.6.0.
+
 ## 0.2.0
 
 - Add backend-controlled Shadow, Warn, and Block modes with explicit-mode precedence.

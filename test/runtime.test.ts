@@ -387,7 +387,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-evidence-"));
   const event = buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",
-    pluginVersion: "0.2.0",
+    pluginVersion: "0.2.1",
     hook: "tool_result",
     mode: "block",
     requestId: "raw-request-id",
@@ -439,11 +439,11 @@ test("demo launcher is credential-safe", async () => {
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "0.2.0");
+  assert.equal(packageJson.version, "0.2.1");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);
-  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.5.0");
+  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.6.0");
   assert.equal(packageJson.peerDependencies["@earendil-works/pi-coding-agent"], "*");
   assert.equal(packageJson.publishConfig.access, "public");
 });

@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolC
 
 import registerExtension from "../extensions/firewall.ts";
 import { buildLocalProtectionEvent, writeLocalProtectionEvent } from "../src/local-evidence.ts";
-import { PiFirewallRuntime, extractTextContent, resolveRuntimeConfig, stableStringify, withProvenance } from "../src/runtime.ts";
+import { PiFirewallRuntime, effectiveMode, extractTextContent, resolveRuntimeConfig, stableStringify, withProvenance } from "../src/runtime.ts";
 import { buildDemoStatus, buildDemoUrl, normalizeBaseUrl, openBrowser, optionValue } from "../scripts/open-playground.mjs";
 
 const NO_CONFIG_PATH = path.join(
@@ -88,6 +88,12 @@ function assistantMessage(text = "assistant output"): MessageEndEvent {
     },
   } as MessageEndEvent;
 }
+
+test("backend effective mode wins and configured mode is a legacy fallback", () => {
+  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "block"), "warn");
+  assert.equal(effectiveMode({ prediction: "MALICIOUS" }, "block"), "block");
+  assert.equal(effectiveMode({ prediction: "MALICIOUS" }), "shadow");
+});
 
 test("runtime configuration defaults safely", () => {
   assert.equal(resolveRuntimeConfig({ SILMARIL_CONFIG_PATH: NO_CONFIG_PATH }), undefined);

@@ -265,12 +265,14 @@ export class PiFirewallRuntime {
 
 export function effectiveMode(
   result: ClassificationResult,
-  requestedMode?: FirewallMode,
+  fallbackMode?: FirewallMode,
 ): FirewallMode {
+  // The backend response is the effective policy decision. The locally
+  // requested mode is only a compatibility fallback for older SDK responses.
   const returned = result.mode;
   return returned === "shadow" || returned === "warn" || returned === "block"
     ? returned
-    : requestedMode ?? "shadow";
+    : fallbackMode ?? "shadow";
 }
 
 export function withProvenance(metadata: Record<string, unknown>, endpointId?: string): Record<string, unknown> {

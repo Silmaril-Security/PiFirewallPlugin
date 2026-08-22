@@ -89,9 +89,11 @@ function assistantMessage(text = "assistant output"): MessageEndEvent {
   } as MessageEndEvent;
 }
 
-test("configured pilot override wins and backend mode controls otherwise", () => {
+test("the mode sent on the request is authoritative and backend mode controls only when omitted", () => {
   assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "block"), "block");
   assert.equal(effectiveMode({ prediction: "MALICIOUS" }, "block"), "block");
+  // A legacy backend can ignore the new request field and return its configured
+  // Block mode. The plugin must not escalate an explicit Warn or Shadow pilot.
   assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "block" }, "warn"), "warn");
   assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "shadow"), "shadow");
   assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }), "warn");

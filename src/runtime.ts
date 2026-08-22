@@ -265,12 +265,13 @@ export class PiFirewallRuntime {
 
 export function effectiveMode(
   result: ClassificationResult,
-  requestedMode?: FirewallMode,
+  requestOverride?: FirewallMode,
 ): FirewallMode {
-  // A supplied mode is the per-request pilot override. Keep it authoritative
-  // across legacy or mixed-version backend responses.
+  // This is the exact mode sent on the classify request. It is the product's
+  // explicit pilot override, so a legacy backend response must not strengthen
+  // Shadow or Warn into Block during a mixed-version rollout.
   const returned = result.mode;
-  if (requestedMode) return requestedMode;
+  if (requestOverride) return requestOverride;
   return returned === "shadow" || returned === "warn" || returned === "block" ? returned : "shadow";
 }
 

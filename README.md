@@ -74,7 +74,7 @@ Pi-specific subagent packages, worker adapters, and delegation semantics are not
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Omit mode to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. Casing variants and unknown predictions never block.
+Shadow mode returns no Pi mutation. Omit mode to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Stable logical request IDs use Pi's session ID and host event identity; no process-global synthetic counter is used.
 

@@ -89,9 +89,10 @@ function assistantMessage(text = "assistant output"): MessageEndEvent {
   } as MessageEndEvent;
 }
 
-test("backend effective mode wins and configured mode is a legacy fallback", () => {
-  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "block"), "warn");
+test("configured pilot override wins and backend mode controls otherwise", () => {
+  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "block"), "block");
   assert.equal(effectiveMode({ prediction: "MALICIOUS" }, "block"), "block");
+  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }), "warn");
   assert.equal(effectiveMode({ prediction: "MALICIOUS" }), "shadow");
 });
 

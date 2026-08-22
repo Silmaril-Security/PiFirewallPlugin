@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Add backend-controlled Shadow, Warn, and Block modes with explicit-mode precedence.
+- Deliver bounded Warn context and use only Pi-native handled or block responses without content replacement.
+
 ## 0.1.2
 
 - Add app-managed endpoint and harness provenance to every Firewall request.

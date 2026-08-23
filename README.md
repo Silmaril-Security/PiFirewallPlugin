@@ -21,7 +21,7 @@ npm ci
 pi -e .
 ```
 
-The package is npm-ready but is not published to npm in v0.2.0. GitHub installation is the supported distribution path until a separate publish approval.
+The package is npm-ready but is not published to npm in v0.2.1. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 

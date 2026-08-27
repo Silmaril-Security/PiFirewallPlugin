@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- Restore Pi-native tool-result and assistant-output replacement in Block mode.
+
 ## 0.2.1
 
 - Preserve the backend-selected effective mode by using TypeScript SDK 0.6.0.

@@ -26,7 +26,7 @@ export type LocalProtectionEventV1 = {
   modelScore?: number;
   modelThreshold?: number;
   policyDecision: "allow" | "monitor" | "warn" | "block" | "unavailable";
-  nativeAction: "none" | "allowed" | "block_returned" | "warning_context_returned" | "failed" | "unavailable";
+  nativeAction: "none" | "allowed" | "block_returned" | "content_replaced" | "warning_context_returned" | "failed" | "unavailable";
   warnDelivery?: "delivered" | "unsupported";
   blockUnavailable?: boolean;
   outcome: "not_observed";
@@ -94,7 +94,9 @@ export function buildLocalProtectionEvent(input: LocalEvidenceInput): LocalProte
     warnDelivery: input.warnDelivery,
     blockUnavailable: input.blockUnavailable,
     outcome: "not_observed",
-    evidenceTruth: input.nativeAction === "block_returned" ? "native_response_returned" : "plugin_reported",
+    evidenceTruth: input.nativeAction === "block_returned" || input.nativeAction === "content_replaced"
+      ? "native_response_returned"
+      : "plugin_reported",
     evidenceCompleteness: "partial",
     provenance: {
       schemaVersion: 1,

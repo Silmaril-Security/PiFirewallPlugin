@@ -21,7 +21,7 @@ npm ci
 pi -e .
 ```
 
-The package is npm-ready but is not published to npm in v0.2.1. GitHub installation is the supported distribution path until a separate publish approval.
+The package is npm-ready but is not published to npm in v0.2.2. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 
@@ -65,8 +65,8 @@ Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If
 | --- | --- | --- | --- |
 | `input` | `user_input` | Continue | Return `handled` and show a bounded notice |
 | `tool_call` | `tool_call` | Continue | Return Pi's native tool block response |
-| `tool_result` | `tool_response` | Preserve result | Preserve result and record `block_unavailable` |
-| assistant `message_end` | `llm_output` | Preserve message | Preserve finalized content and record `block_unavailable` |
+| `tool_result` | `tool_response` | Preserve result | Replace malicious result before model reuse |
+| assistant `message_end` | `llm_output` | Preserve message | Replace malicious finalized content before delivery |
 
 Input with `source === "extension"` is always ignored to prevent feedback loops. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
 

@@ -247,7 +247,7 @@ test("shadow mode observes all native boundaries without mutation", async () => 
   assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output|private reasoning/u);
 });
 
-test("block mode uses Pi-native handled and block without replacement responses", async () => {
+test("block mode uses Pi-native handled, block, and content replacements", async () => {
   const notifications: string[] = [];
   const events: any[] = [];
   const runtime = new PiFirewallRuntime(
@@ -259,11 +259,25 @@ test("block mode uses Pi-native handled and block without replacement responses"
   assert.match(notifications[0] ?? "", /blocked potentially malicious/u);
   assert.deepEqual(await runtime.handleToolCall(toolCall(), context()), { block: true, reason: "Silmaril Firewall blocked potentially malicious content." });
   const resultPatch = await runtime.handleToolResult(toolResult(), context());
-  assert.equal(resultPatch, undefined);
+  assert.deepEqual(resultPatch, {
+    content: [{ type: "text", text: "Silmaril Firewall blocked potentially malicious content." }],
+    details: { silmaril: { blocked: true } },
+    isError: true,
+  });
+  assert.doesNotMatch(JSON.stringify(resultPatch), /tool output/u);
   const messagePatch = await runtime.handleMessageEnd(assistantMessage(), context());
-  assert.equal(messagePatch, undefined);
-  assert.equal(events[2].blockUnavailable, true);
-  assert.equal(events[3].blockUnavailable, true);
+  const patchedMessage = messagePatch?.message;
+  if (!patchedMessage || patchedMessage.role !== "assistant") {
+    assert.fail("expected an assistant message replacement");
+  }
+  assert.equal(patchedMessage.content.length, 1);
+  assert.equal(patchedMessage.content[0]?.type, "text");
+  assert.equal((patchedMessage.content[0] as { text?: string })?.text, "Silmaril Firewall blocked potentially malicious content.");
+  assert.doesNotMatch(JSON.stringify(messagePatch), /assistant output|private reasoning/u);
+  assert.equal(events[2].nativeAction, "content_replaced");
+  assert.equal(events[3].nativeAction, "content_replaced");
+  assert.equal(events[2].blockUnavailable, undefined);
+  assert.equal(events[3].blockUnavailable, undefined);
 });
 
 test("warn mode surfaces bounded same-turn context where Pi supports it", async () => {
@@ -387,7 +401,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-evidence-"));
   const event = buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",
-    pluginVersion: "0.2.1",
+    pluginVersion: "0.2.2",
     hook: "tool_result",
     mode: "block",
     requestId: "raw-request-id",
@@ -439,7 +453,7 @@ test("demo launcher is credential-safe", async () => {
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.version, "0.2.1");
+  assert.equal(packageJson.version, "0.2.2");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

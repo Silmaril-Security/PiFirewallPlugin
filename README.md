@@ -2,14 +2,20 @@
 
 Silmaril Firewall lifecycle protection for Pi coding agents.
 
-This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled or block responses only for the exact SDK prediction `MALICIOUS`. Completed content is never replaced.
+This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses only for the exact SDK prediction `MALICIOUS`.
 
 ## Install
 
-After the first release is tagged, install the GitHub package with:
+Install the published npm package with:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.1.0
+pi install npm:@silmaril/pi-firewall-plugin@0.2.2
+```
+
+The immutable GitHub tag is also supported:
+
+```sh
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.2
 ```
 
 For local development or review:
@@ -20,8 +26,6 @@ cd PiFirewallPlugin
 npm ci
 pi -e .
 ```
-
-The package is npm-ready but is not published to npm in v0.2.1. GitHub installation is the supported distribution path until a separate publish approval.
 
 ## Configure
 
@@ -65,8 +69,8 @@ Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If
 | --- | --- | --- | --- |
 | `input` | `user_input` | Continue | Return `handled` and show a bounded notice |
 | `tool_call` | `tool_call` | Continue | Return Pi's native tool block response |
-| `tool_result` | `tool_response` | Preserve result | Preserve result and record `block_unavailable` |
-| assistant `message_end` | `llm_output` | Preserve message | Preserve finalized content and record `block_unavailable` |
+| `tool_result` | `tool_response` | Preserve result | Replace malicious result before model reuse |
+| assistant `message_end` | `llm_output` | Preserve message | Replace malicious finalized content before delivery |
 
 Input with `source === "extension"` is always ignored to prevent feedback loops. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
 

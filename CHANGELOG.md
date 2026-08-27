@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Publish the package from Silmaril's owned `@silmaril-security` npm scope.
+
 ## 0.2.2
 
 - Restore Pi-native tool-result and assistant-output replacement in Block mode.

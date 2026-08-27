@@ -9,13 +9,13 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 Install the published npm package with:
 
 ```sh
-pi install npm:@silmaril/pi-firewall-plugin@0.2.2
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.3
 ```
 
 The immutable GitHub tag is also supported:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.2
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.3
 ```
 
 For local development or review:

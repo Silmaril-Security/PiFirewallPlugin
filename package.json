@@ -1,6 +1,6 @@
 {
-  "name": "@silmaril/pi-firewall-plugin",
-  "version": "0.2.2",
+  "name": "@silmaril-security/pi-firewall-plugin",
+  "version": "0.2.3",
   "description": "Silmaril Firewall lifecycle protection for Pi coding agents.",
   "type": "module",
   "license": "Apache-2.0",

@@ -166,6 +166,7 @@ export class PiFirewallRuntime {
     const config = resolveRuntimeConfig(this.env);
     if (!config || !input.text.trim()) return undefined;
     const sessionId = safeSessionId(input.ctx);
+    const agentModelId = currentAgentModelId(input.ctx);
     const requestId = `pi-${sha256([sessionId, input.eventName, input.identity].join("\u0000"))}`;
     let result: ClassificationResult;
     try {
@@ -174,7 +175,11 @@ export class PiFirewallRuntime {
         ...(input.toolName ? { toolName: input.toolName } : {}),
         requestId,
         metadata: withProvenance(omitUndefined({
-          silmaril: { integration: PLUGIN_NAME, version: PLUGIN_VERSION },
+          silmaril: {
+            integration: PLUGIN_NAME,
+            version: PLUGIN_VERSION,
+            ...(agentModelId ? { agent_model_id: agentModelId } : {}),
+          },
           piEvent: input.eventName,
           conversationId: sessionId,
           toolName: input.toolName,
@@ -335,6 +340,19 @@ function safeSessionId(ctx: ExtensionContext): string {
     return ctx.sessionManager.getSessionId() || "unknown-session";
   } catch {
     return "unknown-session";
+  }
+}
+
+function currentAgentModelId(ctx: ExtensionContext): string | undefined {
+  // Read the live context model for this event. A missing or blank id is
+  // omitted; do not cache a previous id or substitute a provider default.
+  try {
+    const id = ctx.model?.id;
+    if (typeof id !== "string") return undefined;
+    const trimmed = id.trim();
+    return trimmed || undefined;
+  } catch {
+    return undefined;
   }
 }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Include the current Pi model id as `metadata.silmaril.agent_model_id` when it is nonempty.
+
 ## 0.2.3
 
 - Publish the package from Silmaril's owned `@silmaril-security` npm scope.

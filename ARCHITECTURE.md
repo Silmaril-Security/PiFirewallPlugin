@@ -4,7 +4,7 @@
 
 Pi loads `extensions/firewall.ts` through its TypeScript extension loader. The extension creates one lazy runtime instance and registers only `input`, `tool_call`, `tool_result`, and `message_end`.
 
-Each handler maps host-visible text to a Firewall label, derives a stable request ID from Pi's session and event identity, classifies through the pinned SDK, writes privacy-safe evidence, and returns a native Pi response only for an exact-malicious result in block mode.
+Each handler maps host-visible text to a Firewall label, derives a stable request ID from Pi's session and event identity, classifies through the pinned SDK, writes privacy-safe evidence, and returns a native Pi response only for an exact-malicious result in block mode. Classify metadata includes `metadata.silmaril.agent_model_id` only when the current `ctx.model.id` is a nonempty string. That value is read for the event in progress and is not cached or inferred from a provider default.
 
 All handler failures are caught. This is especially important for `tool_call`, because an uncaught Pi extension error blocks the tool while Silmaril's runtime contract requires classification failures to fail open.
 

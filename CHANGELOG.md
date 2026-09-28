@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+
+- Include the macOS Computer Name in captured endpoint provenance when available.
+
 ## 0.2.3
 
 - Publish the package from Silmaril's owned `@silmaril-security` npm scope.

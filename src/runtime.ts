@@ -23,6 +23,7 @@ import {
   type RuntimeEnv,
   type FirewallMode,
 } from "./runtime-config.ts";
+import { resolvePluginDeviceName, sanitizeDeviceName } from "./mac-computer-name.ts";
 
 export { configurationPath, resolveRuntimeConfig } from "./runtime-config.ts";
 
@@ -44,6 +45,7 @@ type PiMessageEndPatch = { message?: MessageEndEvent["message"] };
 export type RuntimeDependencies = {
   firewallConstructor: FirewallConstructor;
   evidenceEmitter: (event: LocalProtectionEventV1, env: RuntimeEnv) => Promise<unknown>;
+  deviceName?: () => string | undefined;
 };
 
 type Evaluation = { result: ClassificationResult; blocked: boolean; warned: boolean };
@@ -167,6 +169,7 @@ export class PiFirewallRuntime {
     if (!config || !input.text.trim()) return undefined;
     const sessionId = safeSessionId(input.ctx);
     const requestId = `pi-${sha256([sessionId, input.eventName, input.identity].join("\u0000"))}`;
+    const deviceName = resolvePluginDeviceName(this.dependencies.deviceName);
     let result: ClassificationResult;
     try {
       result = await this.getClient(config).classify(input.text, {
@@ -179,7 +182,7 @@ export class PiFirewallRuntime {
           conversationId: sessionId,
           toolName: input.toolName,
           mode: input.ctx.mode,
-        }), config.endpointId),
+        }), config.endpointId, deviceName),
       });
     } catch (error) {
       debugLog(config.debug, "classification_error", {
@@ -286,10 +289,15 @@ export function effectiveMode(
   return returned === "shadow" || returned === "warn" || returned === "block" ? returned : "shadow";
 }
 
-export function withProvenance(metadata: Record<string, unknown>, endpointId?: string): Record<string, unknown> {
+export function withProvenance(
+  metadata: Record<string, unknown>,
+  endpointId?: string,
+  deviceName?: string,
+): Record<string, unknown> {
   const existingSilmaril = metadata.silmaril && typeof metadata.silmaril === "object" && !Array.isArray(metadata.silmaril)
     ? metadata.silmaril as Record<string, unknown>
     : {};
+  const acceptedName = sanitizeDeviceName(deviceName);
   return {
     ...metadata,
     silmaril: {
@@ -298,6 +306,7 @@ export function withProvenance(metadata: Record<string, unknown>, endpointId?: s
         schema_version: 1,
         ...(endpointId ? { endpoint_id: endpointId } : {}),
         harness: "pi",
+        ...(acceptedName ? { device_name: acceptedName } : {}),
       },
     },
   };

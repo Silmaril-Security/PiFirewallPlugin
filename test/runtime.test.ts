@@ -26,12 +26,13 @@ const BASE_ENV = {
   SILMARIL_DEBUG: "false",
 };
 
-function context(notifications: string[] = []): ExtensionContext {
+function context(notifications: string[] = [], model?: { id?: unknown; provider?: string }): ExtensionContext {
   return {
     hasUI: true,
     mode: "tui",
     ui: { notify: (message: string) => { notifications.push(message); } },
     sessionManager: { getSessionId: () => "session-1" },
+    ...(model === undefined ? {} : { model }),
   } as unknown as ExtensionContext;
 }
 
@@ -220,6 +221,48 @@ test("extension registers only the four intended Pi lifecycle events", () => {
   } as unknown as ExtensionAPI;
   registerExtension(pi);
   assert.deepEqual([...handlers.keys()], ["input", "tool_call", "tool_result", "message_end"]);
+});
+
+test("classify metadata records the current Pi model id per event", async () => {
+  const calls: any[] = [];
+  const runtime = new PiFirewallRuntime(
+    { sendMessage: () => undefined },
+    { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
+    dependencies([
+      { prediction: "BENIGN" },
+      { prediction: "MALICIOUS" },
+      { prediction: "BENIGN" },
+      { prediction: "BENIGN" },
+      { prediction: "BENIGN" },
+      { prediction: "BENIGN" },
+    ], [], calls),
+  );
+  const throwingModel = context();
+  Object.defineProperty(throwingModel, "model", {
+    get() {
+      throw new Error("model unavailable");
+    },
+  });
+
+  assert.deepEqual(await runtime.handleInput(inputEvent("first"), context([], { id: "claude-opus-4-5", provider: "anthropic" })), { action: "continue" });
+  assert.deepEqual(await runtime.handleToolCall(toolCall(), context([], { id: "gpt-5", provider: "openai" })), {
+    block: true,
+    reason: "Silmaril Firewall blocked potentially malicious content.",
+  });
+  assert.deepEqual(await runtime.handleInput(inputEvent("absent"), context()), { action: "continue" });
+  assert.deepEqual(await runtime.handleMessageEnd(assistantMessage("provider default"), context([], { provider: "anthropic" })), undefined);
+  assert.deepEqual(await runtime.handleInput(inputEvent("blank"), context([], { id: "  ", provider: "anthropic" })), { action: "continue" });
+  assert.deepEqual(await runtime.handleInput(inputEvent("unreadable"), throwingModel), { action: "continue" });
+
+  const silmaril = calls.filter((call) => call.text).map((call) => call.options.metadata.silmaril);
+  assert.equal(silmaril[0].agent_model_id, "claude-opus-4-5");
+  assert.equal(silmaril[1].agent_model_id, "gpt-5");
+  assert.equal(Object.hasOwn(silmaril[2], "agent_model_id"), false);
+  assert.equal(Object.hasOwn(silmaril[3], "agent_model_id"), false);
+  assert.equal(Object.hasOwn(silmaril[4], "agent_model_id"), false);
+  assert.equal(Object.hasOwn(silmaril[5], "agent_model_id"), false);
+  assert.ok(silmaril.every((metadata) => metadata.integration === "pi-firewall-plugin" && metadata.provenance.harness === "pi"));
+  assert.doesNotMatch(JSON.stringify(silmaril), /anthropic|openai|provider default/u);
 });
 
 test("extension-originated input is ignored to prevent recursion", async () => {

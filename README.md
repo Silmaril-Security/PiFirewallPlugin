@@ -61,7 +61,7 @@ export SILMARIL_ENABLED="true"
 
 `SILMARIL_DEBUG=true` writes metadata-only summaries to stderr. Raw prompts, assistant text, reasoning, tool arguments, and tool results are never logged.
 
-Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If the app-provided canonical UUID v4 is absent, the plugin continues with harness-only provenance.
+Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If the app-provided canonical UUID v4 is absent, the plugin continues with harness-only provenance. When the current Pi model has a nonempty `id`, the same request includes `metadata.silmaril.agent_model_id` taken from that id. The id is read on each event, so a model switch appears on the next classification. A missing model, blank id, or unreadable model omits the field; the plugin does not keep a previous id or substitute a provider default.
 
 ## Coverage
 

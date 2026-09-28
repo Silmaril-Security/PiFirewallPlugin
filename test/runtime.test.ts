@@ -502,14 +502,16 @@ test("invalid or failed device-name lookup still classifies and drops spoofed me
       },
     });
     assert.deepEqual(await failing.handleInput(inputEvent("user prompt"), context()), { action: "continue" });
-    const invalid = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
-      ...dependencies([{ prediction: "BENIGN" }], events, calls),
-      deviceName: () => "Office\u0000Mac",
-    });
-    assert.equal(await invalid.handleToolCall(toolCall(), context()), undefined);
+    for (const deviceName of ["Office\u0000Mac", "Office\u007FMac", "Office\u0085Mac"]) {
+      const invalid = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
+        ...dependencies([{ prediction: "BENIGN" }], events, calls),
+        deviceName: () => deviceName,
+      });
+      assert.equal(await invalid.handleToolCall(toolCall(), context()), undefined);
+    }
   });
   const provenances = calls.filter((call) => call.text).map((call) => call.options.metadata.silmaril.provenance);
-  assert.equal(provenances.length, 2);
+  assert.equal(provenances.length, 4);
   assert.ok(provenances.every((provenance: { device_name?: string; harness: string }) => (
     provenance.device_name === undefined && provenance.harness === "pi"
   )));

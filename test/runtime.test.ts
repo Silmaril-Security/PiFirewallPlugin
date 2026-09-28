@@ -122,7 +122,7 @@ test("runtime configuration defaults safely", () => {
 test("plugin-owned provenance overwrites caller values and preserves unrelated metadata", () => {
   assert.deepEqual(withProvenance({
     trace: "keep",
-    silmaril: { integration: "pi-firewall-plugin", provenance: { endpoint_id: "spoofed", harness: "spoofed" } },
+    silmaril: { integration: "pi-firewall-plugin", provenance: { endpoint_id: "spoofed", harness: "spoofed", device_name: "spoofed-host" } },
   }, "2b64e603-f82a-4aec-9524-9736472dc80a"), {
     trace: "keep",
     silmaril: {
@@ -134,7 +134,24 @@ test("plugin-owned provenance overwrites caller values and preserves unrelated m
       },
     },
   });
+  assert.deepEqual(withProvenance({
+    trace: "keep",
+    silmaril: { integration: "pi-firewall-plugin", provenance: { device_name: "spoofed-host", endpoint_id: "spoofed", harness: "spoofed" } },
+  }, undefined, "  Office Mac \n"), {
+    trace: "keep",
+    silmaril: {
+      integration: "pi-firewall-plugin",
+      provenance: {
+        schema_version: 1,
+        harness: "pi",
+        device_name: "Office Mac",
+      },
+    },
+  });
   assert.deepEqual(withProvenance({}), {
+    silmaril: { provenance: { schema_version: 1, harness: "pi" } },
+  });
+  assert.deepEqual(withProvenance({}, undefined, "Office\u0000Mac"), {
     silmaril: { provenance: { schema_version: 1, harness: "pi" } },
   });
 });
@@ -450,6 +467,70 @@ test("demo launcher is credential-safe", async () => {
   assert.equal(optionValue("--route"), undefined);
   process.argv = originalArgs;
 });
+
+test("classify metadata includes the mac computer name without an endpoint id", async () => {
+  const calls: any[] = [];
+  const events: any[] = [];
+  const env: Record<string, string> = { ...BASE_ENV, SILMARIL_DEBUG: "true" };
+  const stderr = await captureStderr(async () => {
+    const runtime = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
+      ...dependencies([{ prediction: "BENIGN" }], events, calls),
+      deviceName: () => "  Office Mac \n",
+    });
+    assert.deepEqual(await runtime.handleInput(inputEvent("user prompt"), context()), { action: "continue" });
+  });
+  const metadata = calls.find((call) => call.text).options.metadata;
+  assert.deepEqual(metadata.silmaril.provenance, {
+    schema_version: 1,
+    harness: "pi",
+    device_name: "Office Mac",
+  });
+  assert.equal(metadata.silmaril.provenance.endpoint_id, undefined);
+  assert.doesNotMatch(JSON.stringify(events), /Office Mac/u);
+  assert.doesNotMatch(stderr, /Office Mac/u);
+});
+
+test("invalid or failed device-name lookup still classifies and drops spoofed metadata", async () => {
+  const calls: any[] = [];
+  const events: any[] = [];
+  const env = { ...BASE_ENV, SILMARIL_DEBUG: "true" };
+  const stderr = await captureStderr(async () => {
+    const failing = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
+      ...dependencies([{ prediction: "BENIGN" }], events, calls),
+      deviceName: () => {
+        throw new Error("scutil failed for Office Mac");
+      },
+    });
+    assert.deepEqual(await failing.handleInput(inputEvent("user prompt"), context()), { action: "continue" });
+    const invalid = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
+      ...dependencies([{ prediction: "BENIGN" }], events, calls),
+      deviceName: () => "Office\u0000Mac",
+    });
+    assert.equal(await invalid.handleToolCall(toolCall(), context()), undefined);
+  });
+  const provenances = calls.filter((call) => call.text).map((call) => call.options.metadata.silmaril.provenance);
+  assert.equal(provenances.length, 2);
+  assert.ok(provenances.every((provenance: { device_name?: string; harness: string }) => (
+    provenance.device_name === undefined && provenance.harness === "pi"
+  )));
+  assert.doesNotMatch(JSON.stringify(events), /Office Mac/u);
+  assert.doesNotMatch(stderr, /Office Mac/u);
+});
+
+async function captureStderr(run: () => Promise<void>): Promise<string> {
+  const chunks: string[] = [];
+  const original = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await run();
+  } finally {
+    process.stderr.write = original;
+  }
+  return chunks.join("");
+}
 
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));

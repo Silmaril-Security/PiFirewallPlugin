@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   computerNameCachePath,
   createMacComputerNameSource,
@@ -15,9 +15,19 @@ import {
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
+const temporaryCaches: string[] = [];
+
 function tempCache(): string {
-  return mkdtempSync(path.join(os.tmpdir(), "silmaril-computer-name-"));
+  const directory = mkdtempSync(path.join(os.tmpdir(), "silmaril-computer-name-"));
+  temporaryCaches.push(directory);
+  return directory;
 }
+
+after(() => {
+  for (const directory of temporaryCaches) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("sanitizeDeviceName rejects C0, DEL, and C1 controls", () => {
   assert.equal(sanitizeDeviceName("  Office Mac \n"), "Office Mac");
@@ -123,9 +133,10 @@ test("lookup failures and invalid output are omitted and do not respawn inside t
 test("separate processes share a private cache and refresh a renamed computer after five minutes", () => {
   const cacheDirectory = tempCache();
   const spawnLog = path.join(cacheDirectory, "spawns.txt");
-  const first = runLookupProcess({ cacheDirectory, spawnLog, now: 1_000, name: "Office Mac" });
-  const cached = runLookupProcess({ cacheDirectory, spawnLog, now: 1_000 + FIVE_MINUTES_MS - 1, name: "Renamed Mac" });
-  const renamed = runLookupProcess({ cacheDirectory, spawnLog, now: 1_000 + FIVE_MINUTES_MS, name: "Renamed Mac" });
+  const start = Date.now();
+  const first = runLookupProcess({ cacheDirectory, spawnLog, now: start, name: "Office Mac" });
+  const cached = runLookupProcess({ cacheDirectory, spawnLog, now: start + FIVE_MINUTES_MS - 1, name: "Renamed Mac" });
+  const renamed = runLookupProcess({ cacheDirectory, spawnLog, now: start + FIVE_MINUTES_MS, name: "Renamed Mac" });
 
   assert.equal(first.status, 0, first.stderr);
   assert.equal(cached.status, 0, cached.stderr);
@@ -142,8 +153,9 @@ test("separate processes share a private cache and refresh a renamed computer af
 test("a failed lookup is cached across processes without a second scutil launch", () => {
   const cacheDirectory = tempCache();
   const spawnLog = path.join(cacheDirectory, "spawns.txt");
-  const failed = runLookupProcess({ cacheDirectory, spawnLog, now: 5_000, name: "Office Mac", mode: "fail" });
-  const skipped = runLookupProcess({ cacheDirectory, spawnLog, now: 5_000, name: "Office Mac", mode: "fail" });
+  const start = Date.now();
+  const failed = runLookupProcess({ cacheDirectory, spawnLog, now: start, name: "Office Mac", mode: "fail" });
+  const skipped = runLookupProcess({ cacheDirectory, spawnLog, now: Date.now(), name: "Office Mac", mode: "fail" });
 
   assert.equal(failed.status, 0, failed.stderr);
   assert.equal(skipped.status, 0, skipped.stderr);
@@ -209,6 +221,130 @@ test("cached control characters and untrusted cache files do not bypass scutil",
   assert.throws(() => lstatSync(computerNameCachePath(realDirectory)));
 });
 
+test("a failed lookup keeps a name cached by a peer during the refresh", () => {
+  const now = Date.now();
+  const cacheDirectory = tempCache();
+  let calls = 0;
+  const read = createMacComputerNameSource({
+    platform: () => "darwin",
+    now: () => now,
+    cacheDirectory,
+    spawn: () => {
+      calls += 1;
+      plantCache(cacheDirectory, { expiresAt: now + 60_000, name: "Office Mac" });
+      return { status: 1, stdout: Buffer.from("hidden\n") };
+    },
+  });
+
+  assert.equal(read(), "Office Mac");
+  assert.equal(calls, 1);
+  assert.match(readFileSync(computerNameCachePath(cacheDirectory), "utf8"), /Office Mac/u);
+  assert.doesNotMatch(readFileSync(computerNameCachePath(cacheDirectory), "utf8"), /"name":null/u);
+
+  let laterCalls = 0;
+  const later = createMacComputerNameSource({
+    platform: () => "darwin",
+    now: () => now + 1_000,
+    cacheDirectory,
+    spawn: () => {
+      laterCalls += 1;
+      return { status: 0, stdout: Buffer.from("Renamed Mac\n") };
+    },
+  });
+  assert.equal(later(), "Office Mac");
+  assert.equal(laterCalls, 0);
+});
+
+test("file age bounds cache expiry and clock rollback refreshes the name", () => {
+  const now = Date.now();
+  const farFuture = now + 100 * 365 * 24 * 60 * 60 * 1000;
+  for (const plantedName of ["Forged Mac", null] as const) {
+    const cacheDirectory = tempCache();
+    let calls = 0;
+    plantCache(cacheDirectory, { expiresAt: farFuture, name: plantedName });
+    const read = createMacComputerNameSource({
+      platform: () => "darwin",
+      now: () => now,
+      cacheDirectory,
+      spawn: () => {
+        calls += 1;
+        return { status: 0, stdout: Buffer.from("Office Mac\n") };
+      },
+    });
+    assert.equal(read(), "Office Mac", String(plantedName));
+    assert.equal(calls, 1, String(plantedName));
+    assert.doesNotMatch(readFileSync(computerNameCachePath(cacheDirectory), "utf8"), /Forged Mac/u);
+
+    let laterCalls = 0;
+    const later = createMacComputerNameSource({
+      platform: () => "darwin",
+      now: () => now + 1_000,
+      cacheDirectory,
+      spawn: () => {
+        laterCalls += 1;
+        return { status: 0, stdout: Buffer.from("Should Not Run\n") };
+      },
+    });
+    assert.equal(later(), "Office Mac", String(plantedName));
+    assert.equal(laterCalls, 0, String(plantedName));
+  }
+
+  const staleDirectory = tempCache();
+  let staleCalls = 0;
+  plantCache(staleDirectory, { expiresAt: now + 60_000, name: "Forged Mac" });
+  const staleFile = computerNameCachePath(staleDirectory);
+  const aged = new Date(now - FIVE_MINUTES_MS - 1_000);
+  utimesSync(staleFile, aged, aged);
+  const stale = createMacComputerNameSource({
+    platform: () => "darwin",
+    now: () => now,
+    cacheDirectory: staleDirectory,
+    spawn: () => {
+      staleCalls += 1;
+      return { status: 0, stdout: Buffer.from("Office Mac\n") };
+    },
+  });
+  assert.equal(stale(), "Office Mac");
+  assert.equal(staleCalls, 1);
+  assert.doesNotMatch(readFileSync(staleFile, "utf8"), /Forged Mac/u);
+
+  const futureDirectory = tempCache();
+  let futureCalls = 0;
+  plantCache(futureDirectory, { expiresAt: now + 60_000, name: "Forged Mac" });
+  const futureFile = computerNameCachePath(futureDirectory);
+  const ahead = new Date(now + 60 * 60 * 1000);
+  utimesSync(futureFile, ahead, ahead);
+  const future = createMacComputerNameSource({
+    platform: () => "darwin",
+    now: () => now,
+    cacheDirectory: futureDirectory,
+    spawn: () => {
+      futureCalls += 1;
+      return { status: 0, stdout: Buffer.from("Office Mac\n") };
+    },
+  });
+  assert.equal(future(), "Office Mac");
+  assert.equal(futureCalls, 1);
+
+  let clock = now;
+  let rollbackCalls = 0;
+  const rollbackDirectory = tempCache();
+  const rollback = createMacComputerNameSource({
+    platform: () => "darwin",
+    now: () => clock,
+    cacheDirectory: rollbackDirectory,
+    spawn: () => {
+      rollbackCalls += 1;
+      return { status: 0, stdout: Buffer.from(rollbackCalls === 1 ? "Office Mac\n" : "Renamed Mac\n") };
+    },
+  });
+  assert.equal(rollback(), "Office Mac");
+  assert.equal(rollbackCalls, 1);
+  clock = now - 60_000;
+  assert.equal(rollback(), "Renamed Mac");
+  assert.equal(rollbackCalls, 2);
+});
+
 test("non-darwin lookups do not spawn or reuse a cached mac name", () => {
   let platform = "linux";
   let calls = 0;
@@ -235,7 +371,7 @@ test("non-darwin lookups do not spawn or reuse a cached mac name", () => {
   assert.equal(calls, 1);
 });
 
-function plantCache(cacheDirectory: string, value: { expiresAt: number; name: string }): void {
+function plantCache(cacheDirectory: string, value: { expiresAt: number; name: string | null }): void {
   mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 });
   chmodSync(cacheDirectory, 0o700);
   writeFileSync(computerNameCachePath(cacheDirectory), JSON.stringify(value), { mode: 0o600 });

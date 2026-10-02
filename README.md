@@ -45,7 +45,7 @@ The macOS app writes a private configuration file at `~/.pi/agent/silmaril-firew
 
 The file must be a regular file owned by the current user with no group or world permissions. Symbolic links, files larger than 64 KiB, malformed JSON, invalid recognized fields, and insecure permissions are rejected without falling back to ambient credentials. `SILMARIL_CONFIG_PATH` can select a different private file.
 
-Environment variables remain supported as a fallback when the private file is missing. When a valid private file exists, it is fully authoritative so stale process environment cannot disable protection, change its mode, or redirect classified content.
+Environment variables remain supported as a fallback when the private file is missing. When a valid private file exists, it is fully authoritative so stale process environment cannot disable protection, change its mode, or redirect classified content. In either source, an explicit `mode` overrides `blockMalicious`. When `mode` is omitted, `blockMalicious: false` selects shadow and `true` selects block. Omit both to let the backend select the mode.
 
 ```sh
 export SILMARIL_API_URL="https://..."
@@ -57,11 +57,11 @@ export SILMARIL_DEBUG="false"
 export SILMARIL_ENABLED="true"
 ```
 
-`SILMARIL_TIMEOUT_MS` accepts `250` through `10000`. Missing or insecure configuration, malformed event data, invalid classifier responses, SDK construction, network errors, timeouts, and local evidence failures fail open. Every Pi handler catches failures internally so Pi's fail-safe `tool_call` error semantics cannot accidentally turn a Firewall outage into a tool block.
+`SILMARIL_TIMEOUT_MS` accepts `250` through `10000`. Missing or insecure configuration, malformed event data, invalid classifier responses, SDK construction, network errors, and timeouts fail open. Local evidence failures leave the chosen Pi response intact. Every Pi handler catches failures internally so Pi's fail-safe `tool_call` error semantics cannot accidentally turn a Firewall outage into a tool block.
 
-`SILMARIL_DEBUG=true` writes metadata-only summaries to stderr. Raw prompts, assistant text, reasoning, tool arguments, and tool results are never logged.
+`SILMARIL_DEBUG=true` writes metadata-only summaries to stderr. Raw prompts, assistant text, reasoning, tool arguments, tool results, and device names are never logged.
 
-Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If the app-provided canonical UUID v4 is absent, the plugin continues with harness-only provenance.
+Every classifier request carries plugin-owned `metadata.silmaril.provenance` with `schema_version` 1 and `harness` `pi`. A canonical UUID v4 endpoint id is included when configured. A sanitized macOS Computer Name is included as `device_name` when lookup succeeds, and classification continues when either value is absent. The device name is not written to local evidence.
 
 ## Coverage
 
@@ -74,23 +74,23 @@ Every classifier request carries plugin-owned `metadata.silmaril.provenance`. If
 
 Input with `source === "extension"` is always ignored to prevent feedback loops. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
 
-Pi-specific subagent packages, worker adapters, and delegation semantics are not included in v0.1.0. This does not weaken ordinary tool-call protection.
+This package does not include Pi-specific subagent packages, worker adapters, or delegation semantics. Ordinary tool-call protection still applies.
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Omit mode to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
+Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Omit both mode and the legacy block boolean to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Stable logical request IDs use Pi's session ID and host event identity; no process-global synthetic counter is used.
 
 ## Local evidence
 
-Each completed classification emits a bounded `LocalProtectionEventV1` record to:
+Each completed classification attempts to write a bounded `LocalProtectionEventV1` record to:
 
 ```text
 ~/Library/Application Support/Silmaril/Evidence/incoming
 ```
 
-The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, numeric scores, native actions, and version provenance. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, or working-directory paths.
+The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, numeric scores, native actions, and version provenance. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, working-directory paths, or device names.
 
 Set `SILMARIL_LOCAL_EVENT_DIR` only when the default spool must be overridden. Evidence failure never changes the Pi response.
 
@@ -117,7 +117,7 @@ npm run pack:dry
 pi -e .
 ```
 
-Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; Pi's core package is a `"*"` peer dependency as required by Pi package distribution.
+Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.6.0. Pi's core package is a `"*"` peer dependency as required by Pi package distribution.
 
 ## Security and license
 

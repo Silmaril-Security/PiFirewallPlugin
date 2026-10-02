@@ -80,7 +80,7 @@ This package does not include Pi-specific subagent packages, worker adapters, or
 
 Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Omit both mode and the legacy block boolean to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
 
-The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Stable logical request IDs use Pi's session ID and host event identity; no process-global synthetic counter is used.
+The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Input request IDs are callback-unique: every non-extension Pi input callback receives a fresh UUID-derived identity, and that request ID remains stable across SDK retries for that classify invocation. Tool-call and tool-result request IDs are stable for the same Pi session, lifecycle event, and host `toolCallId`; no process-global synthetic counter or content cache is used.
 
 ## Local evidence
 

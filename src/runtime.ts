@@ -1,5 +1,5 @@
 import { Firewall, HookLabel, type FirewallOptions } from "@silmaril-security/sdk";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -70,7 +70,7 @@ export class PiFirewallRuntime {
       firewallHook: HookLabel.USER_INPUT,
       evidenceHook: "user_input",
       eventName: "input",
-      identity: `${event.source}:${sha256(event.text)}`,
+      identity: `${event.source}:${randomUUID()}`,
       ctx,
       nativeAction: "block_returned",
       supportsBlock: true,

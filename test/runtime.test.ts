@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -404,6 +405,30 @@ test("request IDs are stable for the same host identity", async () => {
   const requestIds = calls.filter((call) => call.text).map((call) => call.options.requestId);
   assert.equal(requestIds[0], requestIds[1]);
 });
+
+for (const [label, source] of [
+  ["interactive", "interactive"],
+  ["API-origin", "rpc"],
+] as const) {
+  test(`identical ${label} input callbacks receive distinct request IDs with correlated evidence`, async () => {
+    const calls: any[] = [];
+    const events: any[] = [];
+    const runtime = new PiFirewallRuntime(
+      { sendMessage: () => undefined },
+      BASE_ENV,
+      dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }], events, calls),
+    );
+    await runtime.handleInput(inputEvent("identical input", source), context());
+    await runtime.handleInput(inputEvent("identical input", source), context());
+    const requestIds = calls.filter((call) => call.text).map((call) => call.options.requestId);
+    assert.equal(requestIds.length, 2);
+    assert.notEqual(requestIds[0], requestIds[1]);
+    assert.deepEqual(
+      events.map((event) => event.requestFingerprint),
+      requestIds.map((requestId) => createHash("sha256").update(`request:${requestId}`).digest("hex")),
+    );
+  });
+}
 
 test("assistant extraction excludes thinking and tool calls", () => {
   assert.equal(extractTextContent([

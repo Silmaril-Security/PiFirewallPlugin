@@ -12,4 +12,4 @@ The latest tagged release is supported. Security fixes may require upgrading Pi 
 
 ## Runtime posture
 
-The extension defaults to shadow mode and explicitly catches event-handler failures so configuration, networking, the SDK, and evidence failures remain fail open. Enable blocking only after validating the configured endpoint and local policy expectations.
+When neither an explicit `mode` nor the legacy block flag is set, the backend-selected mode applies. A missing backend mode falls back to shadow. An unrecognized backend wire mode is rejected by the pinned SDK before the hook and fails open. The extension catches configuration, networking, and SDK failures so those paths stay fail open, including `tool_call`. Evidence failures leave the chosen host response intact. Enable blocking only after validating the configured endpoint and local policy expectations.

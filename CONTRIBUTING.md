@@ -1,6 +1,6 @@
 # Contributing
 
-Use a branch from current `origin/main`. Keep Pi-native behavior, fail-open defaults, exact `MALICIOUS` enforcement, extension-input recursion prevention, and raw-content non-retention intact.
+Use a branch from current `origin/main`. Node.js 22 or newer is required. Keep Pi-native behavior, fail-open defaults, exact `MALICIOUS` enforcement, extension-input recursion prevention, and raw-content non-retention intact.
 
 Before submitting a change, run:
 

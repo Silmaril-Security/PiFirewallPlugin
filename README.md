@@ -6,16 +6,16 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-Install the published npm package with:
+After version 0.2.5 is published, install the npm package with:
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.4
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.5
 ```
 
-The immutable GitHub tag is also supported:
+After the release tag is created, the immutable GitHub tag will also be supported:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.4
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.5
 ```
 
 For local development or review:

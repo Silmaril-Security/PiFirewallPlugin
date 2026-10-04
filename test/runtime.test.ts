@@ -562,7 +562,7 @@ async function captureStderr(run: () => Promise<void>): Promise<string> {
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.name, "@silmaril-security/pi-firewall-plugin");
-  assert.equal(packageJson.version, "0.2.4");
+  assert.equal(packageJson.version, "0.2.5");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

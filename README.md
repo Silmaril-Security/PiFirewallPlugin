@@ -6,7 +6,7 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-The currently published release is 0.2.4:
+Install the currently published 0.2.4 release using either npm or the immutable Git tag:
 
 ```sh
 pi install npm:@silmaril-security/pi-firewall-plugin@0.2.4

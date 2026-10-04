@@ -6,18 +6,14 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-Install the currently published 0.2.4 release using either npm or the immutable Git tag:
+Install the input-identity correction from the immutable [v0.2.5 Git release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.5):
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.4
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.4
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.5
 ```
 
-Version 0.2.5 is being prepared with the input-identity correction; that correction is not included in 0.2.4. After 0.2.5 is published, install it with:
-
-```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.5
-```
+The npm release remains 0.2.4 until 0.2.5 is published to the registry; 0.2.4
+does not include this correction. Use the Git release above for the fix.
 
 For local development or review:
 

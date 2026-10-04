@@ -6,7 +6,7 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-Install the input-identity correction from the immutable v0.2.5 Git release:
+Install the input-identity correction from the immutable [v0.2.5 Git release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.5):
 
 ```sh
 pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.5

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5
+
+- Give each distinct input callback a fresh request identity while keeping retries of the same tool event on a stable identity.
+
 ## 0.2.4
 
 - Include the macOS Computer Name in captured endpoint provenance when available.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6
+
+- Clarify that current classify responses omit mode and local settings must
+  explicitly select Warn or Block when intended; omission falls back to Shadow.
+
 ## 0.2.5
 
 - Give each distinct input callback a fresh request identity while keeping retries of the same tool event on a stable identity.

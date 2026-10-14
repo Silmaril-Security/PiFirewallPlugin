@@ -6,16 +6,16 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-Install the published [0.2.5 npm release](https://www.npmjs.com/package/@silmaril-security/pi-firewall-plugin/v/0.2.5), which includes the input-identity correction:
+After publication, install the [0.2.6 npm release](https://www.npmjs.com/package/@silmaril-security/pi-firewall-plugin/v/0.2.6), which includes corrected mode guidance and retains the input-identity correction:
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.5
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.6
 ```
 
-The immutable [v0.2.5 Git release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.5) is also available:
+After publication, the corresponding immutable [v0.2.6 Git release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.6) is also available:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.5
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.6
 ```
 
 For local development or review:
@@ -45,7 +45,7 @@ The macOS app writes a private configuration file at `~/.pi/agent/silmaril-firew
 
 The file must be a regular file owned by the current user with no group or world permissions. Symbolic links, files larger than 64 KiB, malformed JSON, invalid recognized fields, and insecure permissions are rejected without falling back to ambient credentials. `SILMARIL_CONFIG_PATH` can select a different private file.
 
-Environment variables remain supported as a fallback when the private file is missing. When a valid private file exists, it is fully authoritative so stale process environment cannot disable protection, change its mode, or redirect classified content. In either source, an explicit `mode` overrides `blockMalicious`. When `mode` is omitted, `blockMalicious: false` selects shadow and `true` selects block. Omit both to let the backend select the mode.
+Environment variables remain supported as a fallback when the private file is missing. When a valid private file exists, it is fully authoritative so stale process environment cannot disable protection, change its mode, or redirect classified content. In either source, an explicit `mode` overrides `blockMalicious`. When `mode` is omitted, `blockMalicious: false` selects shadow and `true` selects block. Omitting both falls back to Shadow on current classify responses, which omit mode. Set Warn or Block explicitly; valid legacy response modes remain a compatibility fallback.
 
 ```sh
 export SILMARIL_API_URL="https://..."
@@ -78,7 +78,7 @@ This package does not include Pi-specific subagent packages, worker adapters, or
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Omit both mode and the legacy block boolean to use the backend, set `SILMARIL_MODE=block` for a pilot override, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
+Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Current responses omit mode, so omission of both local mode and the legacy boolean falls back to Shadow. Set `SILMARIL_MODE=block` for explicit enforcement, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Input request IDs are callback-unique: every non-extension Pi input callback receives a fresh UUID-derived identity, and that request ID remains stable across SDK retries for that classify invocation. Tool-call and tool-result request IDs are stable for the same Pi session, lifecycle event, and host `toolCallId`; no process-global synthetic counter or content cache is used.
 

@@ -2,20 +2,20 @@
 
 Silmaril Firewall lifecycle protection for Pi coding agents.
 
-This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses only for the exact SDK prediction `MALICIOUS`.
+This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses when the model prediction is exactly `MALICIOUS` or `governance.action` is exactly `block`.
 
 ## Install
 
-After publication, install the [0.2.6 npm release](https://www.npmjs.com/package/@silmaril-security/pi-firewall-plugin/v/0.2.6), which includes corrected mode guidance and retains the input-identity correction:
+When 0.2.7 is published, install that npm release:
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.6
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.7
 ```
 
-After publication, the corresponding immutable [v0.2.6 Git release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.6) is also available:
+The corresponding immutable Git release will use tag `v0.2.7`:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.6
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.7
 ```
 
 For local development or review:
@@ -78,7 +78,7 @@ This package does not include Pi-specific subagent packages, worker adapters, or
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Current responses omit mode, so omission of both local mode and the legacy boolean falls back to Shadow. Set `SILMARIL_MODE=block` for explicit enforcement, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. Casing variants and unknown predictions never block.
+Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Current responses omit mode, so omission of both local mode and the legacy boolean falls back to Shadow. Set `SILMARIL_MODE=block` for explicit enforcement, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. The policy candidate is an exact `MALICIOUS` model prediction or an exact governance action of `block`; casing variants and malformed or unknown governance actions never block. Governance-only denials retain the original benign model prediction in local evidence.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Input request IDs are callback-unique: every non-extension Pi input callback receives a fresh UUID-derived identity, and that request ID remains stable across SDK retries for that classify invocation. Tool-call and tool-result request IDs are stable for the same Pi session, lifecycle event, and host `toolCallId`; no process-global synthetic counter or content cache is used.
 
@@ -117,7 +117,7 @@ npm run pack:dry
 pi -e .
 ```
 
-Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.6.0. Pi's core package is a `"*"` peer dependency as required by Pi package distribution.
+Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.7.6 so governance decisions survive response decoding. Pi's core package is a `"*"` peer dependency as required by Pi package distribution.
 
 ## Security and license
 

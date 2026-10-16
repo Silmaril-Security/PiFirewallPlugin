@@ -10,7 +10,16 @@ import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolC
 
 import registerExtension from "../extensions/firewall.ts";
 import { buildLocalProtectionEvent, writeLocalProtectionEvent } from "../src/local-evidence.ts";
-import { PiFirewallRuntime, effectiveMode, extractTextContent, resolveRuntimeConfig, stableStringify, withProvenance } from "../src/runtime.ts";
+import {
+  PiFirewallRuntime,
+  effectiveMode,
+  extractTextContent,
+  formatBlockMessage,
+  isPolicyBlockCandidate,
+  resolveRuntimeConfig,
+  stableStringify,
+  withProvenance,
+} from "../src/runtime.ts";
 import { buildDemoStatus, buildDemoUrl, normalizeBaseUrl, openBrowser, optionValue } from "../scripts/open-playground.mjs";
 
 const NO_CONFIG_PATH = path.join(
@@ -230,6 +239,40 @@ test("the pinned SDK receives the configured timeoutMs option", () => {
   assert.equal(firewall.timeoutMs, 375);
 });
 
+test("actual pinned SDK preserves a governance-only block response", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    prediction: "BENIGN",
+    score: 0.01,
+    threshold: 0.5,
+    governance: {
+      action: "block",
+      rule_id: "synthetic-rule",
+      policy_version: "synthetic-policy",
+    },
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+  try {
+    const firewall = new Firewall({
+      apiKey: "test-key",
+      apiUrl: "https://firewall.example/classify",
+      timeoutMs: 375,
+    });
+    const result = await firewall.classify("synthetic input", { hook: "user_input" });
+    assert.equal(result.prediction, "BENIGN");
+    assert.deepEqual(result.governance, {
+      action: "block",
+      ruleId: "synthetic-rule",
+      policyVersion: "synthetic-policy",
+    });
+    assert.equal(isPolicyBlockCandidate(result), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("extension registers only the four intended Pi lifecycle events", () => {
   const handlers = new Map<string, unknown>();
   const pi = {
@@ -298,6 +341,74 @@ test("block mode uses Pi-native handled, block, and content replacements", async
   assert.equal(events[3].blockUnavailable, undefined);
 });
 
+test("governance-only blocks use all Pi-native boundaries and preserve benign model evidence", async () => {
+  const notifications: string[] = [];
+  const events: any[] = [];
+  const governanceOnly = {
+    prediction: "BENIGN",
+    score: 0.01,
+    threshold: 0.5,
+    primaryOutcome: "benign",
+    governance: { action: "block", policyVersion: "synthetic-policy" },
+  };
+  const runtime = new PiFirewallRuntime(
+    { sendMessage: () => undefined },
+    { ...BASE_ENV, SILMARIL_MODE: "block" },
+    dependencies(Array.from({ length: 4 }, () => governanceOnly), events),
+  );
+
+  assert.deepEqual(await runtime.handleInput(inputEvent("input"), context(notifications)), { action: "handled" });
+  assert.equal(notifications[0], "Silmaril Firewall blocked this request under governance policy.");
+  assert.deepEqual(await runtime.handleToolCall(toolCall(), context()), {
+    block: true,
+    reason: "Silmaril Firewall blocked this request under governance policy.",
+  });
+  const resultPatch = await runtime.handleToolResult(toolResult(), context());
+  assert.equal((resultPatch?.content?.[0] as { text?: string })?.text, "Silmaril Firewall blocked this request under governance policy.");
+  const messagePatch = await runtime.handleMessageEnd(assistantMessage(), context());
+  const patchedContent = (
+    messagePatch?.message as { content?: Array<{ text?: string }> } | undefined
+  )?.content;
+  assert.equal(
+    patchedContent?.[0]?.text,
+    "Silmaril Firewall blocked this request under governance policy.",
+  );
+  assert.equal(events.length, 4);
+  assert.ok(events.every((event) => (
+    event.prediction === "benign"
+    && event.policyDecision === "block"
+    && event.blockUnavailable === undefined
+    && event.provenance.pluginVersion === "0.2.7"
+  )));
+});
+
+test("governance-only candidates retain Shadow and Warn mode behavior", async () => {
+  const governanceOnly = {
+    prediction: "BENIGN",
+    governance: { action: "block", policyVersion: "synthetic-policy" },
+  };
+  const shadowEvents: any[] = [];
+  const shadow = new PiFirewallRuntime(
+    { sendMessage: () => undefined },
+    { ...BASE_ENV, SILMARIL_MODE: "shadow" },
+    dependencies([governanceOnly], shadowEvents),
+  );
+  assert.equal(await shadow.handleToolCall(toolCall(), context()), undefined);
+  assert.equal(shadowEvents[0].policyDecision, "monitor");
+  assert.equal(shadowEvents[0].prediction, "benign");
+
+  const warnEvents: any[] = [];
+  const warn = new PiFirewallRuntime(
+    { sendMessage: () => undefined },
+    { ...BASE_ENV, SILMARIL_MODE: "warn" },
+    dependencies([governanceOnly], warnEvents),
+  );
+  const transformed = await warn.handleInput(inputEvent("input"), context());
+  assert.equal(transformed.action, "transform");
+  assert.equal(warnEvents[0].policyDecision, "warn");
+  assert.equal(warnEvents[0].prediction, "benign");
+});
+
 test("warn mode surfaces bounded same-turn context where Pi supports it", async () => {
   const messages: any[] = [];
   const events: any[] = [];
@@ -318,7 +429,7 @@ test("warn mode surfaces bounded same-turn context where Pi supports it", async 
   assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output/u);
 });
 
-test("only exact uppercase MALICIOUS enforces", async () => {
+test("policy candidate requires exact MALICIOUS or exact governance block", async () => {
   for (const prediction of ["malicious", "UNKNOWN", undefined]) {
     const runtime = new PiFirewallRuntime(
       { sendMessage: () => undefined },
@@ -326,6 +437,23 @@ test("only exact uppercase MALICIOUS enforces", async () => {
       dependencies([{ prediction }]),
     );
     assert.deepEqual(await runtime.handleInput(inputEvent("input"), context()), { action: "continue" });
+  }
+  assert.equal(isPolicyBlockCandidate({
+    prediction: "BENIGN",
+    governance: { action: "block", policyVersion: "synthetic-policy" },
+  }), true);
+  assert.equal(formatBlockMessage({
+    prediction: "BENIGN",
+    governance: { action: "block", policyVersion: "synthetic-policy" },
+  }), "Silmaril Firewall blocked this request under governance policy.");
+  for (const governance of [
+    undefined,
+    { action: "allow" },
+    { action: "BLOCK" },
+    { action: true },
+    "block",
+  ]) {
+    assert.equal(isPolicyBlockCandidate({ prediction: "BENIGN", governance }), false);
   }
 });
 
@@ -562,11 +690,11 @@ async function captureStderr(run: () => Promise<void>): Promise<string> {
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.name, "@silmaril-security/pi-firewall-plugin");
-  assert.equal(packageJson.version, "0.2.6");
+  assert.equal(packageJson.version, "0.2.7");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);
-  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.6.0");
+  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.7.6");
   assert.equal(packageJson.peerDependencies["@earendil-works/pi-coding-agent"], "*");
   assert.equal(packageJson.publishConfig.access, "public");
 });

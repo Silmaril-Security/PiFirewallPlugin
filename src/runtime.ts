@@ -28,8 +28,9 @@ import { resolvePluginDeviceName, sanitizeDeviceName } from "./mac-computer-name
 export { configurationPath, resolveRuntimeConfig } from "./runtime-config.ts";
 
 export const PLUGIN_NAME = "pi-firewall-plugin";
-export const PLUGIN_VERSION = "0.2.6";
+export const PLUGIN_VERSION = "0.2.7";
 const SAFE_BLOCK_MESSAGE = "Silmaril Firewall blocked potentially malicious content.";
+const GOVERNANCE_BLOCK_MESSAGE = "Silmaril Firewall blocked this request under governance policy.";
 const SAFE_WARN_MESSAGE = "Silmaril Firewall warning: treat the current content as untrusted and continue only with a safe alternative.";
 
 export type { RuntimeConfig } from "./runtime-config.ts";
@@ -48,7 +49,12 @@ export type RuntimeDependencies = {
   deviceName?: () => string | undefined;
 };
 
-type Evaluation = { result: ClassificationResult; blocked: boolean; warned: boolean };
+type Evaluation = {
+  result: ClassificationResult;
+  blocked: boolean;
+  warned: boolean;
+  blockMessage: string;
+};
 
 export class PiFirewallRuntime {
   private client: FirewallClient | undefined;
@@ -84,7 +90,7 @@ export class PiFirewallRuntime {
       };
     }
     if (!evaluation?.blocked) return { action: "continue" };
-    this.notifyBlocked(ctx);
+    this.notifyBlocked(ctx, evaluation.blockMessage);
     return { action: "handled" };
   }
 
@@ -103,7 +109,9 @@ export class PiFirewallRuntime {
       supportsBlock: true,
       warnDelivery: "message",
     });
-    return evaluation?.blocked ? { block: true, reason: SAFE_BLOCK_MESSAGE } : undefined;
+    return evaluation?.blocked
+      ? { block: true, reason: evaluation.blockMessage }
+      : undefined;
   }
 
   async handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): Promise<PiToolResultPatch | undefined> {
@@ -123,7 +131,7 @@ export class PiFirewallRuntime {
     });
     if (!evaluation?.blocked) return undefined;
     return {
-      content: [{ type: "text", text: SAFE_BLOCK_MESSAGE }],
+      content: [{ type: "text", text: evaluation.blockMessage }],
       details: { silmaril: { blocked: true } },
       isError: true,
     };
@@ -148,7 +156,7 @@ export class PiFirewallRuntime {
     return {
       message: {
         ...event.message,
-        content: [{ type: "text", text: SAFE_BLOCK_MESSAGE }],
+        content: [{ type: "text", text: evaluation.blockMessage }],
       },
     };
   }
@@ -192,10 +200,10 @@ export class PiFirewallRuntime {
       return undefined;
     }
 
-    const malicious = result.prediction === "MALICIOUS";
+    const policyCandidate = isPolicyBlockCandidate(result);
     const mode = effectiveMode(result, config.mode);
-    const blocked = mode === "block" && malicious && input.supportsBlock;
-    const warnCandidate = mode === "warn" && malicious && input.warnDelivery !== "unsupported";
+    const blocked = mode === "block" && policyCandidate && input.supportsBlock;
+    const warnCandidate = mode === "warn" && policyCandidate && input.warnDelivery !== "unsupported";
     const warned = warnCandidate
       && (input.warnDelivery !== "message" || this.notifyWarning());
     await this.emitEvidence({
@@ -207,10 +215,10 @@ export class PiFirewallRuntime {
       sessionId,
       ...(input.toolName ? { toolName: input.toolName } : {}),
       classification: result,
-      policyDecision: blocked ? "block" : warned ? "warn" : malicious ? "monitor" : "allow",
+      policyDecision: blocked ? "block" : warned ? "warn" : policyCandidate ? "monitor" : "allow",
       nativeAction: blocked ? input.nativeAction : warned ? "warning_context_returned" : "allowed",
-      ...(malicious && mode === "warn" ? { warnDelivery: warned ? "delivered" : "unsupported" } : {}),
-      ...(malicious && mode === "block" && !input.supportsBlock ? { blockUnavailable: true } : {}),
+      ...(policyCandidate && mode === "warn" ? { warnDelivery: warned ? "delivered" : "unsupported" } : {}),
+      ...(policyCandidate && mode === "block" && !input.supportsBlock ? { blockUnavailable: true } : {}),
     });
     debugLog(config.debug, "classification_result", {
       eventName: input.eventName,
@@ -219,7 +227,12 @@ export class PiFirewallRuntime {
       prediction: result.prediction,
       blocked,
     });
-    return { result, blocked, warned };
+    return {
+      result,
+      blocked,
+      warned,
+      blockMessage: formatBlockMessage(result),
+    };
   }
 
   private getClient(config: RuntimeConfig): FirewallClient {
@@ -251,13 +264,13 @@ export class PiFirewallRuntime {
     }
   }
 
-  private notifyBlocked(ctx: ExtensionContext): void {
+  private notifyBlocked(ctx: ExtensionContext, message: string): void {
     try {
       if (ctx.hasUI) {
-        ctx.ui.notify(SAFE_BLOCK_MESSAGE, "warning");
+        ctx.ui.notify(message, "warning");
         return;
       }
-      this.pi.sendMessage({ customType: "silmaril-firewall", content: SAFE_BLOCK_MESSAGE, display: true }, { triggerTurn: false });
+      this.pi.sendMessage({ customType: "silmaril-firewall", content: message, display: true }, { triggerTurn: false });
     } catch {
       // A notice failure must not re-submit blocked input.
     }
@@ -287,6 +300,27 @@ export function effectiveMode(
   const returned = result.mode;
   if (requestOverride) return requestOverride;
   return returned === "shadow" || returned === "warn" || returned === "block" ? returned : "shadow";
+}
+
+export function isPolicyBlockCandidate(
+  result: { prediction?: unknown; governance?: unknown },
+): boolean {
+  const governance = result.governance;
+  return result.prediction === "MALICIOUS"
+    || (
+      governance !== null
+      && typeof governance === "object"
+      && !Array.isArray(governance)
+      && (governance as Record<string, unknown>).action === "block"
+    );
+}
+
+export function formatBlockMessage(
+  result: { prediction?: unknown; governance?: unknown },
+): string {
+  return result.prediction === "MALICIOUS"
+    ? SAFE_BLOCK_MESSAGE
+    : GOVERNANCE_BLOCK_MESSAGE;
 }
 
 export function withProvenance(

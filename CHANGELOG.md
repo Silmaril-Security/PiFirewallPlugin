@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.7
+
+- Upgrade the pinned TypeScript SDK to 0.7.6 and apply exact governance
+  `action: block` decisions at the same Pi-native boundaries as malicious model
+  predictions.
+- Preserve the model prediction in local evidence and use policy-denial wording
+  for governance-only blocks.
+
 ## 0.2.6
 
 - Clarify that current classify responses omit mode and local settings must

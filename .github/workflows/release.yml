@@ -1,0 +1,279 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag to publish
+        required: true
+        default: v0.2.7
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  validation:
+    name: Validate release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      package_exists: ${{ steps.registry.outputs.package_exists }}
+      registry_status: ${{ steps.registry.outputs.registry_status }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Validate trigger
+        id: trigger
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$EVENT_REF" != "refs/heads/main" ]] \
+              && [[ ! "$EVENT_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Manual releases must be dispatched from main or a strict version tag." >&2
+              exit 1
+            fi
+            release_tag="$DISPATCH_TAG"
+          elif [[ "$EVENT_NAME" == "push" && "$EVENT_REF" == refs/tags/* ]]; then
+            release_tag="${EVENT_REF#refs/tags/}"
+          else
+            echo "Unsupported release trigger." >&2
+            exit 1
+          fi
+
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use strict vMAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+
+          printf 'tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out main with full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: refs/heads/main
+
+      - name: Resolve immutable release
+        id: release
+        env:
+          EXPECTED_PACKAGE_NAME: "@silmaril-security/pi-firewall-plugin"
+          RELEASE_TAG: ${{ steps.trigger.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --force --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+
+          if ! git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "Release tag does not exist: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
+            echo "Release tag commit is not an ancestor of origin/main." >&2
+            exit 1
+          fi
+
+          git checkout --detach "$tag_commit"
+          if [[ "$(git rev-parse HEAD)" != "$tag_commit" ]]; then
+            echo "Checked-out commit does not match the peeled release tag." >&2
+            exit 1
+          fi
+
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          package_private="$(node -p "String(require('./package.json').private === true)")"
+
+          if [[ "$package_name" != "$EXPECTED_PACKAGE_NAME" ]]; then
+            echo "Unexpected package name: ${package_name}" >&2
+            exit 1
+          fi
+          if [[ "$package_private" == "true" ]]; then
+            echo "Refusing to publish a private package." >&2
+            exit 1
+          fi
+          if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Package version must use strict MAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "v${package_version}" ]]; then
+            echo "Release tag does not match package version." >&2
+            exit 1
+          fi
+
+          {
+            printf 'commit=%s\n' "$tag_commit"
+            printf 'tag=%s\n' "$RELEASE_TAG"
+            printf 'version=%s\n' "$package_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install npm 11.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.21.0
+          [[ "$(npm --version)" == "11.21.0" ]]
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run safe tests
+        run: node --import tsx --test test/runtime.test.ts test/mac-computer-name.test.ts
+
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+      - name: Check public registry
+        id: registry
+        env:
+          EXPECTED_PACKAGE_NAME: "@silmaril-security/pi-firewall-plugin"
+          RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const name = process.env.EXPECTED_PACKAGE_NAME;
+          const version = process.env.RELEASE_VERSION;
+          const commit = process.env.RELEASE_COMMIT;
+          const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
+          const response = await fetch(url, {
+            headers: { accept: "application/json" },
+          });
+
+          if (response.status === 404) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "package_exists=false\nregistry_status=absent\n");
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `npm registry status: ${name}@${version} is absent and eligible for trusted publishing.\n`,
+            );
+            console.log(`npm registry status: ${name}@${version} is absent.`);
+            process.exit(0);
+          }
+
+          if (!response.ok) {
+            throw new Error(`npm registry returned HTTP ${response.status}; refusing to publish`);
+          }
+
+          const metadata = await response.json();
+          if (metadata.name !== name || metadata.version !== version) {
+            throw new Error("npm registry returned mismatched package metadata");
+          }
+          if (metadata.gitHead !== commit) {
+            throw new Error(
+              "Existing npm version has a missing or mismatched gitHead; coordinator inspection is required",
+            );
+          }
+          if (typeof metadata.dist?.integrity !== "string" || typeof metadata.dist?.tarball !== "string") {
+            throw new Error("Existing npm version is missing public tarball integrity metadata");
+          }
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            "package_exists=true\nregistry_status=existing_verified_git_head\n",
+          );
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `npm registry status: ${name}@${version} already exists with gitHead ${commit}; publish skipped.\n`,
+          );
+          console.log(`npm registry status: ${name}@${version} already exists and matches gitHead ${commit}.`);
+          NODE
+
+  publish:
+    name: Publish to npm
+    needs: validation
+    if: needs.validation.outputs.package_exists == 'false'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out validated release commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.validation.outputs.commit }}
+
+      - name: Verify validated release identity
+        env:
+          EXPECTED_PACKAGE_NAME: "@silmaril-security/pi-firewall-plugin"
+          RELEASE_COMMIT: ${{ needs.validation.outputs.commit }}
+          RELEASE_TAG: ${{ needs.validation.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validation.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$(git rev-parse HEAD)" != "$RELEASE_COMMIT" ]]; then
+            echo "Publish checkout does not match the validated commit." >&2
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "Validated release tag is missing." >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")" != "$RELEASE_COMMIT" ]]; then
+            echo "Validated release tag no longer resolves to the validated commit." >&2
+            exit 1
+          fi
+
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          package_private="$(node -p "String(require('./package.json').private === true)")"
+          if [[ "$package_name" != "$EXPECTED_PACKAGE_NAME" ]] \
+            || [[ "$package_version" != "$RELEASE_VERSION" ]] \
+            || [[ "$RELEASE_TAG" != "v${package_version}" ]] \
+            || [[ "$package_private" == "true" ]]; then
+            echo "Package metadata no longer matches the validated release." >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install npm 11.21.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.21.0
+          [[ "$(npm --version)" == "11.21.0" ]]
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish with trusted provenance
+        run: npm publish --access public --provenance

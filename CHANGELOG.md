@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8
+
+- Add a tokenless npm trusted-publishing workflow that validates the immutable
+  GitHub run/tag identity and publishes the exact tested package artifact.
+
 ## 0.2.7
 
 - Upgrade the pinned TypeScript SDK to 0.7.6 and apply exact governance

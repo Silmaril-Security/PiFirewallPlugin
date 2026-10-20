@@ -6,13 +6,13 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-When 0.2.8 is published, install that npm release:
+Install the published npm release:
 
 ```sh
 pi install npm:@silmaril-security/pi-firewall-plugin@0.2.8
 ```
 
-The corresponding immutable Git release will use tag `v0.2.8`:
+Or install the immutable Git release tagged `v0.2.8`:
 
 ```sh
 pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.8

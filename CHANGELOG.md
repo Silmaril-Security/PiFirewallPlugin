@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.9
+
+- This patch carries the corrected present-tense public installation wording
+  in the npm-packaged README, with no runtime or enforcement behavior changes.
+
 ## 0.2.8
 
 - Add a tokenless npm trusted-publishing workflow that validates the immutable

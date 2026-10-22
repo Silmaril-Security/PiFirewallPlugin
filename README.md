@@ -18,6 +18,10 @@ Or install the immutable Git release tagged `v0.2.8`:
 pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.8
 ```
 
+This source line carries version 0.2.9. The install commands above pin the
+verified 0.2.8 release; source version metadata does not establish registry
+publication.
+
 For local development or review:
 
 ```sh

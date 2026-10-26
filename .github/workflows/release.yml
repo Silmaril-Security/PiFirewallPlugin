@@ -9,7 +9,6 @@ on:
       tag:
         description: Immutable release tag to publish
         required: true
-        default: v0.2.8
         type: string
 
 permissions:

@@ -165,8 +165,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Run safe tests
-        run: node --import tsx --test test/runtime.test.ts test/mac-computer-name.test.ts
+      - name: Run safe tests against locked Pi host
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ls --depth=0 @earendil-works/pi-coding-agent@1.5.0
+          node --import tsx --test test/runtime.test.ts test/mac-computer-name.test.ts test/pi-host-compat.test.ts
 
       - name: Build release artifact
         id: pack

@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Qualify the native extension against Pi 1.5.0 on Node.js 22.19.0 or newer
+## 0.2.10 (release preparation)
+
+- Prepare source version metadata and documentation for 0.2.10 without
+  claiming Git or npm publication.
+- Retain the exact Pi 1.5.0 development fixture on Node.js 22.19.0 or newer
   while retaining the wildcard Pi peer contract for legacy native hosts.
 - Upgrade the pinned Silmaril SDK to 0.8.2 and send canonical agent/tool
   governance resources without inventing MCP server identity.

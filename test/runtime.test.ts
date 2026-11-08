@@ -12,12 +12,15 @@ import registerExtension from "../extensions/firewall.ts";
 import { buildLocalProtectionEvent, writeLocalProtectionEvent } from "../src/local-evidence.ts";
 import {
   PiFirewallRuntime,
+  agentGovernanceContext,
   effectiveMode,
   extractTextContent,
+  extractToolResultContent,
   formatBlockMessage,
   isPolicyBlockCandidate,
   resolveRuntimeConfig,
   stableStringify,
+  toolGovernanceContext,
   withProvenance,
 } from "../src/runtime.ts";
 import { buildDemoStatus, buildDemoUrl, normalizeBaseUrl, openBrowser, optionValue } from "../scripts/open-playground.mjs";
@@ -417,9 +420,14 @@ test("warn mode surfaces bounded same-turn context where Pi supports it", async 
     { ...BASE_ENV, SILMARIL_MODE: "warn" },
     dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS", mode: "warn", score: 0.99 })), events),
   );
-  const transformed = await runtime.handleInput(inputEvent("raw input"), context());
+  const images = [{ type: "image", data: "cGl4ZWw=", mimeType: "image/png" }] as NonNullable<InputEvent["images"]>;
+  const transformed = await runtime.handleInput({
+    ...inputEvent("raw input"),
+    images,
+  }, context());
   assert.equal(transformed.action, "transform");
   assert.match(transformed.action === "transform" ? transformed.text : "", /^Silmaril Firewall warning:/u);
+  assert.deepEqual(transformed.action === "transform" ? transformed.images : undefined, images);
   assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
   assert.equal(await runtime.handleToolResult(toolResult("raw result"), context()), undefined);
   assert.equal(await runtime.handleMessageEnd(assistantMessage("raw output"), context()), undefined);
@@ -564,7 +572,19 @@ test("assistant extraction excludes thinking and tool calls", () => {
     { type: "text", text: "visible answer" },
     { type: "toolCall", name: "bash", arguments: { command: "pwd" } },
   ]), "visible answer");
+  assert.equal(extractToolResultContent({
+    content: [],
+    structuredContent: { secret: "structured-only" },
+  }), '{"secret":"structured-only"}');
   assert.equal(stableStringify({ z: 1, a: 2 }), '{"a":2,"z":1}');
+  assert.deepEqual(agentGovernanceContext(), {
+    agent: "pi",
+    resource: { kind: "agent", id: "pi" },
+  });
+  assert.deepEqual(toolGovernanceContext("mcp__github__create_issue"), {
+    agent: "pi",
+    resource: { kind: "tool", id: "mcp__github__create_issue" },
+  });
 });
 
 test("local evidence remains bounded, private, atomic, and raw-content free", async () => {
@@ -694,7 +714,9 @@ test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);
-  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.7.6");
+  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.8.2");
+  assert.equal(packageJson.devDependencies["@earendil-works/pi-coding-agent"], "1.5.0");
   assert.equal(packageJson.peerDependencies["@earendil-works/pi-coding-agent"], "*");
+  assert.equal(packageJson.engines.node, ">=22.19.0");
   assert.equal(packageJson.publishConfig.access, "public");
 });

@@ -1,6 +1,8 @@
 # Pi Firewall Plugin
 
-Silmaril Firewall lifecycle protection for Pi coding agents.
+Silmaril Firewall lifecycle protection for Pi coding agents. The qualified
+development host is `@earendil-works/pi-coding-agent` 1.5.0 on Node.js
+22.19.0 or newer.
 
 This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses when the model prediction is exactly `MALICIOUS` or `governance.action` is exactly `block`.
 
@@ -73,10 +75,14 @@ Every classifier request carries plugin-owned `metadata.silmaril.provenance` wit
 | --- | --- | --- | --- |
 | `input` | `user_input` | Continue | Return `handled` and show a bounded notice |
 | `tool_call` | `tool_call` | Continue | Return Pi's native tool block response |
-| `tool_result` | `tool_response` | Preserve result | Replace malicious result before model reuse |
-| assistant `message_end` | `llm_output` | Preserve message | Replace malicious finalized content before delivery |
+| `tool_result` | `tool_response` | Preserve result | Replace malicious text and clear malicious structured content before model reuse |
+| assistant `message_end` | `llm_output` | Preserve message | Replace the finalized message; already-streamed tokens remain observable |
 
-Input with `source === "extension"` is always ignored to prevent feedback loops. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
+Input with `source === "extension"` is always ignored to prevent feedback loops. Tool-result classification includes visible text and serialized `structuredContent`, including results that have no text. Assistant classification includes visible text parts only; thinking blocks and tool calls are not duplicated through `message_end`. Tool calls are protected regardless of which extension registered the tool.
+
+`message_end` is a finalized-message replacement boundary. It can replace the
+message retained by Pi and emitted with the final event, but it cannot retract
+assistant tokens that Pi already streamed to an observer before `message_end`.
 
 This package does not include Pi-specific subagent packages, worker adapters, or delegation semantics. Ordinary tool-call protection still applies.
 
@@ -121,7 +127,7 @@ npm run pack:dry
 pi -e .
 ```
 
-Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.7.6 so governance decisions survive response decoding. Pi's core package is a `"*"` peer dependency as required by Pi package distribution.
+Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.8.2 for current response validation and canonical governance-resource serialization. Pi 1.5.0 is the exact development fixture while the core package remains a `"*"` peer dependency for Pi package distribution. The package engine floor is Node.js 22.19.0, matching that qualified host.
 
 ## Security and license
 

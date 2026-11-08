@@ -1,4 +1,10 @@
-import { Firewall, HookLabel, type FirewallOptions } from "@silmaril-security/sdk";
+import {
+  Firewall,
+  HookLabel,
+  type ClassifyOptions,
+  type FirewallOptions,
+  type GovernanceContext,
+} from "@silmaril-security/sdk";
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ExtensionAPI,
@@ -9,6 +15,7 @@ import type {
   ToolCallEvent,
   ToolCallEventResult,
   ToolResultEvent,
+  ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import {
   buildLocalProtectionEvent,
@@ -36,11 +43,10 @@ const SAFE_WARN_MESSAGE = "Silmaril Firewall warning: treat the current content 
 export type { RuntimeConfig } from "./runtime-config.ts";
 type ClassificationResult = Record<string, unknown>;
 type FirewallClient = {
-  classify(text: string, options?: { hook?: string; toolName?: string; metadata?: Record<string, unknown>; requestId?: string; mode?: FirewallMode }): Promise<ClassificationResult>;
+  classify(text: string, options?: ClassifyOptions): Promise<ClassificationResult>;
 };
 type FirewallConstructor = new (options: FirewallOptions & { mode?: FirewallMode }) => FirewallClient;
 type PiHost = Pick<ExtensionAPI, "sendMessage">;
-type PiToolResultPatch = { content?: ToolResultEvent["content"]; details?: unknown; isError?: boolean };
 type PiMessageEndPatch = { message?: MessageEndEvent["message"] };
 
 export type RuntimeDependencies = {
@@ -77,6 +83,7 @@ export class PiFirewallRuntime {
       evidenceHook: "user_input",
       eventName: "input",
       identity: `${event.source}:${randomUUID()}`,
+      governance: agentGovernanceContext(),
       ctx,
       nativeAction: "block_returned",
       supportsBlock: true,
@@ -104,6 +111,9 @@ export class PiFirewallRuntime {
       eventName: "tool_call",
       identity: event.toolCallId,
       toolName: event.toolName,
+      toolCallId: event.toolCallId,
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+      governance: toolGovernanceContext(event.toolName),
       ctx,
       nativeAction: "block_returned",
       supportsBlock: true,
@@ -114,8 +124,8 @@ export class PiFirewallRuntime {
       : undefined;
   }
 
-  async handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): Promise<PiToolResultPatch | undefined> {
-    const text = extractTextContent(event.content);
+  async handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | undefined> {
+    const text = extractToolResultContent(event);
     if (!text) return undefined;
     const evaluation = await this.evaluate({
       text,
@@ -124,6 +134,9 @@ export class PiFirewallRuntime {
       eventName: "tool_result",
       identity: event.toolCallId,
       toolName: event.toolName,
+      toolCallId: event.toolCallId,
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+      governance: toolGovernanceContext(event.toolName),
       ctx,
       nativeAction: "content_replaced",
       supportsBlock: true,
@@ -147,6 +160,7 @@ export class PiFirewallRuntime {
       evidenceHook: "llm_output",
       eventName: "message_end",
       identity: String(event.message.timestamp),
+      governance: agentGovernanceContext(),
       ctx,
       nativeAction: "content_replaced",
       supportsBlock: true,
@@ -163,11 +177,14 @@ export class PiFirewallRuntime {
 
   private async evaluate(input: {
     text: string;
-    firewallHook: string;
+    firewallHook: HookLabel;
     evidenceHook: ProtectionHook;
     eventName: string;
     identity: string;
     toolName?: string;
+    toolCallId?: string;
+    parentToolCallId?: string;
+    governance: GovernanceContext;
     ctx: ExtensionContext;
     nativeAction: "block_returned" | "content_replaced";
     supportsBlock: boolean;
@@ -183,12 +200,15 @@ export class PiFirewallRuntime {
       result = await this.getClient(config).classify(input.text, {
         hook: input.firewallHook,
         ...(input.toolName ? { toolName: input.toolName } : {}),
+        governance: input.governance,
         requestId,
         metadata: withProvenance(omitUndefined({
           silmaril: { integration: PLUGIN_NAME, version: PLUGIN_VERSION },
           piEvent: input.eventName,
           conversationId: sessionId,
           toolName: input.toolName,
+          toolCallId: input.toolCallId,
+          parentToolCallId: input.parentToolCallId,
           mode: input.ctx.mode,
         }), config.endpointId, deviceName),
       });
@@ -354,6 +374,31 @@ export function extractTextContent(content: unknown): string {
     const record = part as Record<string, unknown>;
     return record.type === "text" && typeof record.text === "string" && record.text.trim() ? [record.text.trim()] : [];
   }).join("\n");
+}
+
+export function extractToolResultContent(
+  event: Pick<ToolResultEvent, "content" | "structuredContent">,
+): string {
+  return [
+    extractTextContent(event.content),
+    stableStringify(event.structuredContent),
+  ].filter(Boolean).join("\n");
+}
+
+export function agentGovernanceContext(): GovernanceContext {
+  return {
+    agent: "pi",
+    resource: { kind: "agent", id: "pi" },
+  };
+}
+
+export function toolGovernanceContext(toolName: string): GovernanceContext {
+  return {
+    agent: "pi",
+    // Pi's parentToolCallId identifies a nested call, not an MCP server. Treating
+    // it as GovernanceResource.parentId would invent an MCP identity.
+    resource: { kind: "tool", id: toolName },
+  };
 }
 
 export function stableStringify(value: unknown): string {

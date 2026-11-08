@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Qualify the native extension against Pi 1.5.0 on Node.js 22.19.0 or newer
+  while retaining the wildcard Pi peer contract for legacy native hosts.
+- Upgrade the pinned Silmaril SDK to 0.8.2 and send canonical agent/tool
+  governance resources without inventing MCP server identity.
+- Classify structured-only tool results and rely on Pi's native result
+  replacement to clear blocked structured content while preserving usage.
+- Document that finalized `message_end` replacement cannot retract tokens that
+  Pi already streamed.
+
 ## 0.2.9
 
 - This patch carries the corrected present-tense public installation wording

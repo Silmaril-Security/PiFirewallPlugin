@@ -2,17 +2,17 @@
 
 ## Unreleased
 
-## 0.2.10 (release preparation)
+## 0.2.10
 
-- Prepare source version metadata and documentation for 0.2.10 without
-  claiming Git or npm publication.
-- Retain the exact Pi 1.5.0 development fixture on Node.js 22.19.0 or newer
-  while retaining the wildcard Pi peer contract for legacy native hosts.
-- Upgrade the pinned Silmaril SDK to 0.8.2 and send canonical agent/tool
+- Ship [`v0.2.10`](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.10)
+  on GitHub and npm.
+- Retain the exact Pi 1.5.0 development fixture on Node.js 22.19.0 or newer and
+  the wildcard Pi peer contract for legacy native hosts.
+- Upgrade the pinned Silmaril SDK to 0.8.2 and send canonical agent and tool
   governance resources without inventing MCP server identity.
 - Classify structured-only tool results and rely on Pi's native result
   replacement to clear blocked structured content while preserving usage.
-- Document that finalized `message_end` replacement cannot retract tokens that
+- Finalized `message_end` replacement cannot retract tokens that
   Pi already streamed.
 
 ## 0.2.9

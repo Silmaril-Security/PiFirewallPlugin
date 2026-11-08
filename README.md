@@ -8,33 +8,22 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-The current published npm release is 0.2.9:
-
-```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.9
-```
-
-The matching immutable Git tag is `v0.2.9` at commit
-`009426a8a5d317c38c7e983daf2e81c3fef27166`:
-
-```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.9
-```
-
-Published 0.2.9 depends on `@silmaril-security/sdk` 0.7.6; it does not contain
-the SDK 0.8.2 behavior in this prepared source.
-
-This source is prepared for 0.2.10. After the coordinator independently
-verifies the Git tag and immutable npm artifact, the intended 0.2.10 commands
-will be:
+Version 0.2.10 is available in the [`v0.2.10` GitHub release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.10)
+and on npm:
 
 ```sh
 pi install npm:@silmaril-security/pi-firewall-plugin@0.2.10
+```
+
+The matching immutable Git tag is `v0.2.10` at commit
+`8d89b1657bdbf561ef2ce61b2cd236dbf757970f`:
+
+```sh
 pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.10
 ```
 
-Those 0.2.10 commands are release-preparation examples, not evidence that
-either artifact has been published.
+Both installations provide the released package with
+`@silmaril-security/sdk` 0.8.2.
 
 For local development or review:
 

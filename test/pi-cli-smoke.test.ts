@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,19 +16,19 @@ import {
 } from "./native-acceptance/harness.ts";
 
 test("pi -e . applies malicious tool-result and assistant replacements through the host", { timeout: 20_000 }, async () => {
-  const classifier = startClassifier((hook) => hook === "tool_response" || hook === "llm_output");
-  const classifierLoopback = await classifier;
+  const classifier = await startClassifier((hook) => hook === "tool_response" || hook === "llm_output");
   const model = await startLoopback<Record<string, unknown>>(async (body) => toolResults(body).length > 0
     ? chatCompletionReply({ role: "assistant", content: "PI_RAW_ASSISTANT_OUTPUT" }, "stop")
     : toolCallReply("printf PI_RAW_TOOL_RESULT"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-cli-"));
   try {
-    const agentDirectory = path.join(await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-cli-")), "agent");
+    const agentDirectory = path.join(root, "agent");
     await writeAgentDirectory(agentDirectory, model.url);
     const turn = await runPiTurn(
       path.join(process.cwd(), "node_modules", ".bin", "pi"),
       ["-e", "."],
       process.cwd(),
-      firewallEnvironment(agentDirectory, classifierLoopback.url),
+      firewallEnvironment(agentDirectory, classifier.url),
       "exercise every Pi Firewall output boundary",
     );
 
@@ -54,6 +54,6 @@ test("pi -e . applies malicious tool-result and assistant replacements through t
       "user_input", "tool_call", "tool_response", "llm_output",
     ]);
   } finally {
-    await Promise.all([model.close(), classifierLoopback.close()]);
+    await Promise.all([model.close(), classifier.close(), rm(root, { recursive: true, force: true })]);
   }
 });

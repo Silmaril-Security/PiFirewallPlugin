@@ -32,6 +32,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "npm run typecheck",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:native": "node --import tsx test/native-acceptance/harness.ts",
     "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {

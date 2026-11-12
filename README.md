@@ -130,6 +130,10 @@ pi -e .
 
 Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.8.2 for current response validation and canonical governance-resource serialization. Pi 1.5.0 is the exact development fixture while the core package remains a `"*"` peer dependency for Pi package distribution. The package engine floor is Node.js 22.19.0, matching that qualified host.
 
+### Native acceptance
+
+`npm run test:native` packs this package, installs that tarball through `pi install npm:@silmaril-security/pi-firewall-plugin@<version>` from a loopback registry into a private agent directory, and drives the locked Pi host over RPC with a scripted model. It requires an allowed tool call to leave its file on disk, a blocked tool call to leave none, and a blocked tool result to stay out of the next model request. The receipt is written to `NATIVE_ACCEPTANCE_RECEIPT` or `.test-build/native-acceptance/receipt.json` on every exit, including setup failures; a Pi turn that exits early or runs past 60 seconds fails the run with a named `error`. CI runs it on `main`, on manual dispatch, and nightly when `CUSTOMER_NATIVE_ENABLED` is `true`. Setting `CUSTOMER_NATIVE_CLASSIFIER=live` with `CUSTOMER_NATIVE_API_URL` and `CUSTOMER_NATIVE_API_KEY` forwards classification to the customer Cascade endpoint while the plugin keeps its own `block` mode, so the returned tenant mode is recorded but never decides the result; a request that fails, outlives the plugin's 2500 ms deadline, or contradicts the scenario is reported as `BLOCKED` with a named cause. Real model inference is outside this receipt.
+
 ## Security and license
 
 Report vulnerabilities through GitHub private vulnerability reporting. See [SECURITY.md](SECURITY.md). The plugin is licensed under Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

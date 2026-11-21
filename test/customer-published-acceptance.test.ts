@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -15,11 +15,11 @@ const HELPER = process.env.CUSTOMER_ARCHIVE_HELPER;
 const SHA = execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPOSITORY, encoding: "utf8" }).trim();
 const VERSION = (JSON.parse(execFileSync("node", ["-p", "JSON.stringify(require('./package.json'))"], { cwd: REPOSITORY, encoding: "utf8" })) as { version: string }).version;
 
-async function drive(env: Record<string, string>): Promise<{ code: number | null; result: unknown }> {
+async function drive(env: Record<string, string>, driver = DRIVER): Promise<{ code: number | null; result: unknown }> {
   const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-customer-driver-test-"));
   try {
     const resultPath = path.join(root, "result.json");
-    const code = await promisify(execFile)(DRIVER, [], {
+    const code = await promisify(execFile)(driver, [], {
       cwd: root,
       env: { PATH: process.env.PATH, HOME: root, CUSTOMER_RESULT: resultPath, ...env },
       timeout: 240_000,
@@ -97,6 +97,54 @@ test("the release can predate the QA checkout", async () => {
 test("a missing result path is a usage error", async () => {
   const code = await promisify(execFile)(DRIVER, [], { env: { PATH: process.env.PATH } }).then(() => 0, (error: { code?: number }) => error.code);
   assert.equal(code, 2);
+});
+
+test("the driver accepts an installed archive receipt and blocks live without credentials", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-customer-driver-test-"));
+  try {
+    const { artifact, digest } = await candidate(root, true);
+    const scripts = path.join(root, "scripts");
+    const harness = path.join(root, "test/native-acceptance");
+    await mkdir(scripts);
+    await mkdir(harness, { recursive: true });
+    const driver = path.join(scripts, "customer-published-acceptance");
+    await copyFile(DRIVER, driver);
+    for (const name of ["package.json", "package-lock.json", "node_modules"]) {
+      await symlink(path.join(REPOSITORY, name), path.join(root, name));
+    }
+    // Only the manifest is needed for this driver contract test; the external
+    // release acceptance uses the shared archive verifier and the native host.
+    const helper = path.join(root, "unpack.py");
+    await writeFile(helper, `import pathlib, sys, tarfile
+artifact, destination, flag, prefix = sys.argv[1:]
+assert (flag, prefix) == ("--prefix", "package")
+root = pathlib.Path(destination)
+root.mkdir()
+with tarfile.open(artifact) as archive:
+    (root / "package.json").write_bytes(archive.extractfile("package/package.json").read())
+`);
+    await writeFile(path.join(harness, "harness.ts"), `
+      import { createHash } from "node:crypto";
+      import { readFileSync, writeFileSync } from "node:fs";
+      import path from "node:path";
+      const env = process.env;
+      const manifest = JSON.parse(readFileSync(path.join(env.NATIVE_ACCEPTANCE_PACKAGE_DIR, "package.json")));
+      writeFileSync(env.NATIVE_ACCEPTANCE_RECEIPT, JSON.stringify({
+        schema: "silmaril.native-acceptance.v1", classifier: "loopback",
+        source_sha: env.CUSTOMER_SOURCE_SHA, status: "PASS",
+        plugin: { installed_bytes_match: true, version: manifest.version,
+          artifact_sha256: createHash("sha256").update(readFileSync(env.NATIVE_ACCEPTANCE_TARBALL)).digest("hex") },
+      }));
+    `);
+    const run = await drive({
+      CUSTOMER_ARTIFACT: artifact, CUSTOMER_ARTIFACT_SHA256: digest, CUSTOMER_VERSION: VERSION,
+      CUSTOMER_SOURCE_SHA: SHA, CUSTOMER_ARCHIVE_HELPER: helper,
+    }, driver);
+    assert.equal(run.code, 1);
+    assert.deepEqual(run.result, { install: "PASS", native: "PASS", live: "BLOCKED" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // Needs the shared archive helper (CUSTOMER_ARCHIVE_HELPER) and the public npm registry for the host's dependency install.

@@ -316,7 +316,7 @@ jobs:
         id: framework
         with:
           repository: Silmaril-Security/SilmarilCustomerTests
-          ref: 3dd837d6cfc8e88c7b4d72b833ae62ae7105d9e5
+          ref: 5e55f0c052d8c2858689e2b74fb6a2a90159051f
           token: ${{ steps.reader.outputs.token }}
           path: _customer
           persist-credentials: false

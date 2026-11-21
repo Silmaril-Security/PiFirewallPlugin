@@ -61,7 +61,6 @@ test("a wrong digest or malformed input never passes and the result holds only s
       [{ CUSTOMER_ARTIFACT_SHA256: digest.toUpperCase() }, failed],
       [{ CUSTOMER_VERSION: "1.2" }, failed],
       [{ CUSTOMER_SOURCE_SHA: "abc" }, failed],
-      [{ CUSTOMER_SOURCE_SHA: "f".repeat(40) }, failed],
       [{ CUSTOMER_ARTIFACT: "relative.tgz" }, failed],
       [{ CUSTOMER_ARTIFACT: path.join(root, "absent.tgz") }, blocked],
       [{ CUSTOMER_ARCHIVE_HELPER: path.join(root, "absent.py") }, blocked],
@@ -71,6 +70,25 @@ test("a wrong digest or malformed input never passes and the result holds only s
       assert.equal(run.code, 1, JSON.stringify(overrides));
       assert.deepEqual(run.result, expected, JSON.stringify(overrides));
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the release can predate the QA checkout", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-customer-driver-test-"));
+  try {
+    const { artifact, digest } = await candidate(root, false);
+    const helper = path.join(root, "extract.py");
+    const marker = path.join(root, "attempted");
+    await writeFile(helper, `from pathlib import Path\nPath(${JSON.stringify(marker)}).touch()\nraise SystemExit(1)\n`);
+    const releaseSha = SHA === "f".repeat(40) ? "e".repeat(40) : "f".repeat(40);
+    const run = await drive({
+      CUSTOMER_ARTIFACT: artifact, CUSTOMER_VERSION: VERSION, CUSTOMER_SOURCE_SHA: releaseSha,
+      CUSTOMER_ARTIFACT_SHA256: digest, CUSTOMER_ARCHIVE_HELPER: helper,
+    });
+    assert.deepEqual(run.result, { install: "FAIL", native: "BLOCKED", live: "BLOCKED" });
+    accessSync(marker);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

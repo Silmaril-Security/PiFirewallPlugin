@@ -35,8 +35,9 @@ function verify() {
   if (!path.isAbsolute(artifact) || !/^\d+\.\d+\.\d+$/u.test(version) || !/^[0-9a-f]{40}$/u.test(sha) || !/^[0-9a-f]{64}$/u.test(digest)) return "FAIL";
   if (!existsSync(artifact) || !existsSync(helper)) return "BLOCKED";
   if (createHash("sha256").update(readFileSync(artifact)).digest("hex") !== digest) return "FAIL";
-  const head = run("git", ["rev-parse", "HEAD"]);
-  return head.status === 0 && head.stdout.trim() === sha ? "PASS" : "FAIL";
+  // The caller resolved the package commit from npm provenance. The QA driver
+  // can be newer than the package and independently verifies its actual bytes.
+  return "PASS";
 }
 
 function bootstrap() {
@@ -58,7 +59,10 @@ function harness(private_, name, staged, extra) {
   const expected = name === "live" ? "live" : "loopback";
   const matches = receipt?.schema === "silmaril.native-acceptance.v1"
     && receipt.source_sha === env.CUSTOMER_SOURCE_SHA && receipt.classifier === expected;
-  return { status: matches ? statusOf(receipt, child.status) : "FAIL", installed: matches && receipt.plugin?.installed_bytes_match === true };
+  const installed = matches && receipt.plugin?.installed_bytes_match === true
+    && receipt.plugin.version === env.CUSTOMER_VERSION && receipt.plugin.artifact_sha256 === env.CUSTOMER_ARTIFACT_SHA256;
+  const status = matches ? statusOf(receipt, child.status) : "FAIL";
+  return { status: status === "PASS" && !installed ? "FAIL" : status, installed };
 }
 
 const private_ = mkdtempSync(path.join(realpathSync(os.tmpdir()), "silmaril-customer-"));

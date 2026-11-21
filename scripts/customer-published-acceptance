@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+// Product driver for the shared customer acceptance action.
+// Input env: CUSTOMER_ARTIFACT (absolute npm .tgz), CUSTOMER_VERSION, CUSTOMER_SOURCE_SHA, CUSTOMER_ARTIFACT_SHA256,
+// CUSTOMER_ARCHIVE_HELPER, CUSTOMER_RESULT, and for the live case CUSTOMER_NATIVE_API_URL / CUSTOMER_NATIVE_API_KEY.
+// Writes only {"install","native","live"} status values to CUSTOMER_RESULT and exits zero only when all three PASS.
+// Per-scenario harness receipts stay in a private temporary directory that is removed on exit.
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const env = process.env;
+const result = { install: "BLOCKED", native: "BLOCKED", live: "BLOCKED" };
+
+if (!env.CUSTOMER_RESULT) {
+  process.stderr.write("CUSTOMER_RESULT is required\n");
+  process.exit(2);
+}
+const resultPath = path.resolve(env.CUSTOMER_RESULT);
+const record = () => {
+  const temporary = `${resultPath}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(result)}\n`, { mode: 0o600 });
+  renameSync(temporary, resultPath);
+};
+const run = (command, args, options = {}) => spawnSync(command, args, { cwd: repository, encoding: "utf8", ...options });
+const withoutSecrets = (base) => Object.fromEntries(Object.entries(base).filter(([name]) => !["CUSTOMER_NATIVE_API_KEY", "SILMARIL_API_KEY", "CUSTOMER_NATIVE_CLASSIFIER"].includes(name)));
+const statusOf = (receipt, code) => receipt?.status === "PASS" && code === 0 ? "PASS" : receipt?.status === "BLOCKED" ? "BLOCKED" : "FAIL";
+
+function verify() {
+  const { CUSTOMER_ARTIFACT: artifact, CUSTOMER_VERSION: version, CUSTOMER_SOURCE_SHA: sha, CUSTOMER_ARTIFACT_SHA256: digest, CUSTOMER_ARCHIVE_HELPER: helper } = env;
+  if (![artifact, version, sha, digest, helper].every(Boolean)) return "BLOCKED";
+  if (!path.isAbsolute(artifact) || !/^\d+\.\d+\.\d+$/u.test(version) || !/^[0-9a-f]{40}$/u.test(sha) || !/^[0-9a-f]{64}$/u.test(digest)) return "FAIL";
+  if (!existsSync(artifact) || !existsSync(helper)) return "BLOCKED";
+  if (createHash("sha256").update(readFileSync(artifact)).digest("hex") !== digest) return "FAIL";
+  // The caller resolved the package commit from npm provenance. The QA driver
+  // can be newer than the package and independently verifies its actual bytes.
+  return "PASS";
+}
+
+function bootstrap() {
+  const lock = JSON.parse(readFileSync(path.join(repository, "package-lock.json"), "utf8")).packages;
+  const current = ["@earendil-works/pi-coding-agent", "tsx"].every((name) => {
+    const manifest = path.join(repository, "node_modules", name, "package.json");
+    return existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).version === lock[`node_modules/${name}`]?.version;
+  });
+  return current || run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { env: withoutSecrets(env), stdio: "ignore" }).status === 0;
+}
+
+function harness(private_, name, staged, extra) {
+  const receiptPath = path.join(private_, `${name}.json`);
+  const child = run(process.execPath, ["--import", "tsx", "test/native-acceptance/harness.ts"], {
+    env: { ...(extra.CUSTOMER_NATIVE_CLASSIFIER ? env : withoutSecrets(env)), ...staged, ...extra, NATIVE_ACCEPTANCE_RECEIPT: receiptPath },
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  const receipt = existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, "utf8")) : undefined;
+  const expected = name === "live" ? "live" : "loopback";
+  const matches = receipt?.schema === "silmaril.native-acceptance.v1"
+    && receipt.source_sha === env.CUSTOMER_SOURCE_SHA && receipt.classifier === expected;
+  const installed = matches && receipt.plugin?.installed_bytes_match === true
+    && receipt.plugin.version === env.CUSTOMER_VERSION && receipt.plugin.artifact_sha256 === env.CUSTOMER_ARTIFACT_SHA256;
+  const status = matches ? statusOf(receipt, child.status) : "FAIL";
+  return { status: status === "PASS" && !installed ? "FAIL" : status, installed };
+}
+
+const private_ = mkdtempSync(path.join(realpathSync(os.tmpdir()), "silmaril-customer-"));
+try {
+  record();
+  result.install = verify();
+  if (result.install === "PASS") {
+    const staged = path.join(private_, "package");
+    const unpacked = run("python3", [env.CUSTOMER_ARCHIVE_HELPER, env.CUSTOMER_ARTIFACT, staged, "--prefix", "package"], { stdio: "ignore" });
+    const manifest = unpacked.status === 0 ? JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8")) : {};
+    const expected = JSON.parse(readFileSync(path.join(repository, "package.json"), "utf8")).name;
+    if (unpacked.status !== 0 || manifest.name !== expected || manifest.version !== env.CUSTOMER_VERSION) result.install = "FAIL";
+    else if (!bootstrap()) result.install = "BLOCKED";
+    else {
+      const files = { NATIVE_ACCEPTANCE_TARBALL: env.CUSTOMER_ARTIFACT, NATIVE_ACCEPTANCE_PACKAGE_DIR: staged };
+      const loopback = harness(private_, "native", files, {});
+      result.install = loopback.installed ? "PASS" : "FAIL";
+      result.native = result.install === "PASS" ? loopback.status : "BLOCKED";
+      if (result.install === "PASS" && env.CUSTOMER_NATIVE_API_URL && env.CUSTOMER_NATIVE_API_KEY) {
+        result.live = harness(private_, "live", files, { CUSTOMER_NATIVE_CLASSIFIER: "live" }).status;
+      }
+    }
+  }
+} catch {
+  for (const phase of ["install", "native", "live"]) if (result[phase] === "PASS") result[phase] = "FAIL";
+  if (Object.values(result).every((status) => status !== "FAIL")) result.install = "FAIL";
+} finally {
+  rmSync(private_, { recursive: true, force: true });
+  record();
+}
+process.exit(Object.values(result).every((status) => status === "PASS") ? 0 : 1);

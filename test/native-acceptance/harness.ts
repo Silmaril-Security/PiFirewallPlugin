@@ -430,16 +430,22 @@ async function acceptance(repository: string, receipt: Receipt): Promise<Status>
   const cleanups: Array<() => Promise<void>> = [];
   try {
     const live = receipt.classifier === "live" ? liveClassifierFrom(process.env) : undefined;
-    const manifest = JSON.parse(readFileSync(path.join(repository, "package.json"), "utf8")) as { name: string; version: string };
+    const supplied = process.env.NATIVE_ACCEPTANCE_TARBALL && process.env.NATIVE_ACCEPTANCE_PACKAGE_DIR
+      ? { tarball: process.env.NATIVE_ACCEPTANCE_TARBALL, packageRoot: process.env.NATIVE_ACCEPTANCE_PACKAGE_DIR }
+      : undefined;
+    const manifest = JSON.parse(readFileSync(path.join(supplied?.packageRoot ?? repository, "package.json"), "utf8")) as { name: string; version: string };
     const packageSource = `npm:${manifest.name}@${manifest.version}`;
     const pi = path.join(repository, "node_modules", ".bin", "pi");
-    receipt.source_sha = process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
+    receipt.source_sha = process.env.CUSTOMER_SOURCE_SHA ?? process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
     const root = await mkdtemp(path.join(os.tmpdir(), "silmaril-pi-native-"));
     cleanups.push(() => rm(root, { recursive: true, force: true }));
-    const tarball = path.join(root, execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", root], { cwd: repository, encoding: "utf8" }).trim().split("\n").at(-1) ?? "");
-    const extracted = path.join(root, "artifact");
-    await mkdir(extracted);
-    execFileSync("tar", ["-xzf", tarball, "-C", extracted]);
+    // A supplied archive and its staged contents are used as they are; otherwise the checkout is packed.
+    const tarball = supplied?.tarball ?? path.join(root, execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", root], { cwd: repository, encoding: "utf8" }).trim().split("\n").at(-1) ?? "");
+    const packageRoot = supplied?.packageRoot ?? path.join(root, "artifact", "package");
+    if (!supplied) {
+      await mkdir(path.dirname(packageRoot));
+      execFileSync("tar", ["-xzf", tarball, "-C", path.dirname(packageRoot)]);
+    }
     const agentDirectory = path.join(root, "agent");
     const workspace = path.join(root, "workspace");
     await mkdir(workspace);
@@ -464,8 +470,9 @@ async function acceptance(repository: string, receipt: Receipt): Promise<Status>
       env: { ...env, npm_config_registry: registry.url, npm_config_cache: path.join(root, "npm-cache") },
       timeout: 120_000,
     });
-    const installedBytesMatch = sameFiles(
-      path.join(extracted, "package"),
+    const registered = (JSON.parse(readFileSync(path.join(agentDirectory, "settings.json"), "utf8")) as { packages?: unknown[] }).packages ?? [];
+    const installedBytesMatch = registered.includes(packageSource) && sameFiles(
+      packageRoot,
       path.join(agentDirectory, "npm", "node_modules", ...manifest.name.split("/")),
     );
     receipt.plugin = {

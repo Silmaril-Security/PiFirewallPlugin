@@ -6,6 +6,9 @@ import type { BlockResult, Confidence, Severity } from "@silmaril-security/sdk";
 
 const MAX_EVENT_BYTES = 16 * 1024;
 const MAX_SAFE_VALUE_LENGTH = 128;
+const MAX_PROVENANCE_BYTES = 128;
+const PLUGIN_POLICY_VERSION = "pi-plugin-policy-v1";
+const UNSAFE_PROVENANCE_CHARACTERS = /[\p{Cc}\p{Cf}\p{Cs}]/gu;
 const CONFIDENCE_LEVELS: ReadonlySet<Confidence> = new Set(["very_low", "low", "medium", "high", "very_high"]);
 const SEVERITY_LEVELS: ReadonlySet<Severity> = new Set(["minimal", "low", "moderate", "high", "critical"]);
 const DEFAULT_DIRECTORY = ["Library", "Application Support", "Silmaril", "Evidence", "incoming"];
@@ -40,7 +43,8 @@ export type LocalProtectionEventV1 = {
     producer: string;
     producerVersion: string;
     pluginVersion: string;
-    policyVersion: "pi-plugin-policy-v1";
+    policyVersion: string;
+    modelVersion?: string;
     observedAt: string;
   };
 };
@@ -76,6 +80,7 @@ const CONSEQUENCE_SUMMARIES: Record<ProtectionCategory, string> = {
 export function buildLocalProtectionEvent(input: LocalEvidenceInput): LocalProtectionEventV1 {
   const occurredAt = (input.occurredAt ?? new Date()).toISOString();
   const riskClass = normalizeCategory(input.classification.outcome);
+  const modelVersion = boundedProvenance(input.classification.modelId);
   return omitUndefined({
     schemaVersion: 1,
     id: `event-${sha256([input.sessionId, input.requestId, occurredAt, randomUUID()].filter(Boolean).join("\u0000"))}`,
@@ -105,7 +110,8 @@ export function buildLocalProtectionEvent(input: LocalEvidenceInput): LocalProte
       producer: bounded(input.pluginName) ?? "pi-firewall-plugin",
       producerVersion: bounded(input.pluginVersion) ?? "unknown",
       pluginVersion: bounded(input.pluginVersion) ?? "unknown",
-      policyVersion: "pi-plugin-policy-v1",
+      policyVersion: boundedProvenance(input.classification.governance?.policyVersion) ?? PLUGIN_POLICY_VERSION,
+      ...(modelVersion ? { modelVersion } : {}),
       observedAt: occurredAt,
     },
   }) as LocalProtectionEventV1;
@@ -188,6 +194,18 @@ function fingerprint(namespace: string, value: unknown): string | undefined {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function boundedProvenance(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  let bounded = "";
+  let bytes = 0;
+  for (const character of value.replace(UNSAFE_PROVENANCE_CHARACTERS, "").trim()) {
+    bytes += Buffer.byteLength(character, "utf8");
+    if (bytes > MAX_PROVENANCE_BYTES) break;
+    bounded += character;
+  }
+  return bounded || undefined;
 }
 
 function bounded(value: string): string | undefined {

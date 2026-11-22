@@ -19,6 +19,10 @@
   Firewall reports a value the receipt schema knows, and stop writing
   `modelScore` and `modelThreshold`. The event schema version and every other
   field are unchanged.
+- Record `provenance.modelVersion` from the decision's model identifier and
+  `provenance.policyVersion` from the governance decision's policy version,
+  keeping `pi-plugin-policy-v1` for decisions without governance. Both are
+  stripped of control and format characters and cut to 128 UTF-8 bytes.
 - Report `action` and `source` in debug diagnostics in place of `prediction`.
 - Serve `/v2/classify` with a version 2 body and `/classify` with a version 1
   body from the native acceptance classifier, and relay each route to the

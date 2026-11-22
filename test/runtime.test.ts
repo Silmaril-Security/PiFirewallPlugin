@@ -381,6 +381,7 @@ function version1Body(text: string): Record<string, unknown> {
     primary_outcome: source === "model" ? "secret_exposure" : "benign",
     outcome_scores: source === "model" ? { secret_exposure: 0.99 } : {},
     ...(source === "governance" ? { governance: GOVERNANCE_WIRE } : {}),
+    model_id: "synthetic-model",
   };
 }
 
@@ -726,6 +727,64 @@ test("local evidence records known confidence and severity and never model score
     const event = build(classification);
     assert.equal(event.prediction, prediction);
     assert.equal(absent(event, ["confidence", "severity", "modelScore", "modelThreshold"]), true);
+  }
+});
+
+test("local evidence provenance versions are bounded the way the app ingests them", () => {
+  const provenance = (classification: unknown) => buildLocalProtectionEvent({
+    pluginName: "pi-firewall-plugin",
+    pluginVersion: "0.3.0",
+    hook: "tool_result",
+    mode: "shadow",
+    classification: classification as BlockResult,
+    policyDecision: "allow",
+    nativeAction: "allowed",
+  }).provenance;
+  const withModel = (modelId: unknown) => provenance({ action: "allow", modelId });
+  const withPolicy = (policyVersion: unknown) => provenance({
+    action: "allow",
+    governance: { action: "allow", policyVersion },
+  });
+  for (const [raw, bounded] of [
+    ["  release-7  ", "release-7"],
+    ["re\u0000le\tase\u0085-7", "release-7"],
+    ["re\u200Ble\u00ADase\uFEFF-7", "release-7"],
+    ["\uD83Drelease\uDC00-7", "release-7"],
+    ["release-\u{1F512}", "release-\u{1F512}"],
+    ["a".repeat(128), "a".repeat(128)],
+    ["a".repeat(129), "a".repeat(128)],
+    ["\u00E9".repeat(65), "\u00E9".repeat(64)],
+    [`${"a".repeat(127)}\u00E9`, "a".repeat(127)],
+    [`${"a".repeat(126)}\u{1F512}`, "a".repeat(126)],
+  ] as const) {
+    assert.equal(withModel(raw).modelVersion, bounded);
+    assert.equal(withPolicy(raw).policyVersion, bounded);
+    assert.ok(Buffer.byteLength(bounded, "utf8") <= 128);
+  }
+  for (const absent of [undefined, null, 7, {}, ["release-7"], "", "   ", "\u200B\u0000"]) {
+    assert.equal(Object.hasOwn(withModel(absent), "modelVersion"), false);
+    assert.equal(withPolicy(absent).policyVersion, "pi-plugin-policy-v1");
+  }
+  assert.equal(provenance(ALLOW).policyVersion, "pi-plugin-policy-v1");
+});
+
+test("model and policy versions reach local evidence on every classifier deployment generation", async () => {
+  for (const [name, deployment] of Object.entries(CLASSIFIER_DEPLOYMENTS)) {
+    await withClassifierDeployment(deployment.respond, async () => {
+      const events: any[] = [];
+      const runtime = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_MODE: "shadow" },
+        { firewallConstructor: Firewall, evidenceEmitter: async (event) => { events.push(event); } },
+      );
+      await runtime.handleToolResult(toolResult(GOVERNED_TEXT), context());
+      await runtime.handleToolResult(toolResult("plain result"), context());
+      assert.deepEqual(
+        events.map((event) => [event.provenance.policyVersion, event.provenance.modelVersion]),
+        [["synthetic-policy", "synthetic-model"], ["pi-plugin-policy-v1", "synthetic-model"]],
+        name,
+      );
+    });
   }
 });
 

@@ -114,7 +114,7 @@ Each completed classification attempts to write a bounded `LocalProtectionEventV
 ~/Library/Application Support/Silmaril/Evidence/incoming
 ```
 
-The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, the decision's `confidence` and `severity` labels when the Firewall reports a known value, native actions, and version provenance; `modelScore` and `modelThreshold` are no longer written. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, working-directory paths, or device names.
+The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, the decision's `confidence` and `severity` labels when the Firewall reports a known value, native actions, and version provenance; `modelScore` and `modelThreshold` are no longer written. `provenance.modelVersion` records the decision's model identifier when the Firewall reports one, and `provenance.policyVersion` records the governance decision's policy version, or `pi-plugin-policy-v1` when the decision carries no governance; both are stripped of control and format characters and cut to 128 UTF-8 bytes. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, working-directory paths, or device names.
 
 Set `SILMARIL_LOCAL_EVENT_DIR` only when the default spool must be overridden. Evidence failure never changes the Pi response.
 

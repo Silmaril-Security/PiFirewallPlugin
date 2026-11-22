@@ -4,26 +4,39 @@ Silmaril Firewall lifecycle protection for Pi coding agents. The qualified
 development host is `@earendil-works/pi-coding-agent` 1.5.0 on Node.js
 22.19.0 or newer.
 
-This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses when the model prediction is exactly `MALICIOUS` or `governance.action` is exactly `block`.
+This Pi package classifies raw user input, tool calls, tool results, and finalized assistant text with `@silmaril-security/sdk`. Shadow is silent, Warn adds one bounded warning where Pi exposes same-turn context, and Block uses Pi-native handled, block, or content-replacement responses when the Firewall decision's `action` is anything other than `allow`.
 
 ## Install
 
-Version 0.2.10 is available in the [`v0.2.10` GitHub release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.10)
+The current published release is 0.2.11, available in the [`v0.2.11` GitHub release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.11)
 and on npm:
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.10
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.11
 ```
 
-The matching immutable Git tag is `v0.2.10` at commit
-`8d89b1657bdbf561ef2ce61b2cd236dbf757970f`:
+The matching immutable Git tag is `v0.2.11` at commit
+`8db2a63d756ee45899558f2dd69a4d8ea67c59ec`:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.10
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.11
 ```
 
 Both installations provide the released package with
-`@silmaril-security/sdk` 0.8.2.
+`@silmaril-security/sdk` 0.8.2; it does not contain the SDK 1.0.0 behavior in
+this prepared source.
+
+This source is prepared for 0.3.0, which moves to `@silmaril-security/sdk`
+1.0.0. After the Git tag and immutable npm artifact are independently
+verified, the intended 0.3.0 commands will be:
+
+```sh
+pi install npm:@silmaril-security/pi-firewall-plugin@0.3.0
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.3.0
+```
+
+Those 0.3.0 commands are release-preparation examples, not evidence that
+either artifact has been published.
 
 For local development or review:
 
@@ -89,7 +102,7 @@ This package does not include Pi-specific subagent packages, worker adapters, or
 
 ## Enforcement semantics
 
-Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Current responses omit mode, so omission of both local mode and the legacy boolean falls back to Shadow. Set `SILMARIL_MODE=block` for explicit enforcement, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. The policy candidate is an exact `MALICIOUS` model prediction or an exact governance action of `block`; casing variants and malformed or unknown governance actions never block. Governance-only denials retain the original benign model prediction in local evidence.
+Shadow mode returns no Pi mutation. Warn keeps tool results and assistant text, prefixes user input, and delivers a bounded warning for a tool call and for a tool result. Assistant `message_end` has no warn delivery. Current responses omit mode, so omission of both local mode and the legacy boolean falls back to Shadow. Set `SILMARIL_MODE=block` for explicit enforcement, or use the legacy block boolean. An explicit mode overrides that boolean. A supplied mode is sent on the classify request and remains authoritative during mixed-version rollout: an older backend response cannot strengthen an explicit Shadow or Warn request into Block. The policy candidate is any SDK result whose `action` is not `allow`; `source`, `confidence`, `severity`, `outcome`, and an attached governance decision never create or cancel one. A block whose `source` is `governance` uses governance-policy copy and is recorded with a benign model prediction in local evidence.
 
 The SDK client is cached per extension instance after successful construction. Failed construction is retryable on the next event. Input request IDs are callback-unique: every non-extension Pi input callback receives a fresh UUID-derived identity, and that request ID remains stable across SDK retries for that classify invocation. Tool-call and tool-result request IDs are stable for the same Pi session, lifecycle event, and host `toolCallId`; no process-global synthetic counter or content cache is used.
 
@@ -101,7 +114,7 @@ Each completed classification attempts to write a bounded `LocalProtectionEventV
 ~/Library/Application Support/Silmaril/Evidence/incoming
 ```
 
-The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, numeric scores, native actions, and version provenance. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, working-directory paths, or device names.
+The directory is private (`0700`), each file is private (`0600`), and writes use a temporary file plus atomic rename. Records contain only fingerprints, bounded consequence metadata, the decision's `confidence` and `severity` labels when the Firewall reports a known value, native actions, and version provenance; `modelScore` and `modelThreshold` are no longer written. They never contain prompts, assistant output, tool arguments/results, reasoning, API keys, endpoints, session files, working-directory paths, or device names.
 
 Set `SILMARIL_LOCAL_EVENT_DIR` only when the default spool must be overridden. Evidence failure never changes the Pi response.
 
@@ -128,7 +141,7 @@ npm run pack:dry
 pi -e .
 ```
 
-Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 0.8.2 for current response validation and canonical governance-resource serialization. Pi 1.5.0 is the exact development fixture while the core package remains a `"*"` peer dependency for Pi package distribution. The package engine floor is Node.js 22.19.0, matching that qualified host.
+Pi loads the TypeScript extension directly. Runtime dependencies are in `dependencies`; `@silmaril-security/sdk` is pinned to 1.0.0, which calls `/v2/classify` on the configured endpoint, falls back to `/classify` on deployments without it, and serializes canonical governance resources. Pi 1.5.0 is the exact development fixture while the core package remains a `"*"` peer dependency for Pi package distribution. The package engine floor is Node.js 22.19.0, matching that qualified host.
 
 ### Native acceptance
 

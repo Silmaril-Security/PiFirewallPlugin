@@ -2,8 +2,32 @@
 
 ## Unreleased
 
-## 0.2.11 (release preparation)
+## 0.3.0 (release preparation)
 
+- Prepare source version metadata and documentation for 0.3.0 without
+  claiming Git or npm publication.
+- Upgrade the pinned Silmaril SDK to 1.0.0, which calls `/v2/classify`,
+  returns the Firewall decision instead of a score, and falls back to
+  `/classify` on deployments without the new route. Configuration is
+  unchanged.
+- Decide on the SDK result's `action`: anything other than `allow` is a policy
+  candidate. The runtime previously read `prediction` from an untyped result,
+  which SDK 1.0.0 no longer returns; it now uses the SDK's `BlockResult` type.
+  A block whose `source` is `governance` keeps its governance-policy message
+  and its benign recorded prediction.
+- Record the decision's `confidence` and `severity` in local evidence when the
+  Firewall reports a value the receipt schema knows, and stop writing
+  `modelScore` and `modelThreshold`. The event schema version and every other
+  field are unchanged.
+- Report `action` and `source` in debug diagnostics in place of `prediction`.
+- Serve `/v2/classify` with a version 2 body and `/classify` with a version 1
+  body from the native acceptance classifier, and relay each route to the
+  matching customer route.
+
+## 0.2.11
+
+- Ship [`v0.2.11`](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.11)
+  on GitHub and npm.
 - Bound each logical Pi classification with one aggregate, clearable deadline.
   Its signal cancels the pinned SDK 0.8.2 request and
   retry wait while the configured SDK timeout remains the per-attempt limit.

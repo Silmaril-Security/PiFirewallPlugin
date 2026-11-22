@@ -32,7 +32,9 @@ export interface ClassifierRequest {
   outcome: "success" | "http_error" | "invalid_response" | "transport_error";
   durationMs: number;
   marker: string | null;
-  upstream?: { prediction: string; mode: string | null; action: string | null };
+  upstream?:
+    | { prediction: string; mode: string | null; action: string | null }
+    | { action: string; source: string | null };
 }
 
 export interface Observation {
@@ -102,7 +104,7 @@ async function listen(server: http.Server): Promise<Listener> {
 }
 
 export async function startLoopback<Body>(
-  respond: (body: Body, index: number) => Promise<{ status: number; type: string; text: string }>,
+  respond: (body: Body, index: number, route: string) => Promise<{ status: number; type: string; text: string }>,
 ): Promise<Loopback<Body>> {
   const requests: Body[] = [];
   const exchanges: Array<Promise<void>> = [];
@@ -110,7 +112,7 @@ export async function startLoopback<Body>(
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk as Buffer);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Body;
-    const reply = await respond(body, requests.push(body));
+    const reply = await respond(body, requests.push(body), request.url ?? "");
     response.writeHead(reply.status, { "content-type": reply.type });
     response.end(reply.text);
   };
@@ -155,12 +157,46 @@ export function liveClassifierFrom(env: NodeJS.ProcessEnv): LiveClassifier {
   return { url, key };
 }
 
+export const V2_ROUTE = "/v2/classify";
+export const V1_ROUTE = "/classify";
+const ROUTE_FALLBACK_STATUSES: ReadonlySet<number> = new Set([403, 404, 405]);
+const jsonReply = (status: number, body: unknown) => ({ status, type: "application/json", text: JSON.stringify(body) });
+
+export function upstreamRoute(configuredUrl: string, route: string): string {
+  const url = new URL(configuredUrl);
+  const base = url.pathname.replace(/\/$/u, "");
+  const configuredRoute = [V2_ROUTE, V1_ROUTE].find((known) => base.endsWith(known));
+  url.pathname = `${configuredRoute ? base.slice(0, -configuredRoute.length) : base}${route}`;
+  return url.href;
+}
+
+export function loopbackVerdict(route: string, block: boolean): Record<string, unknown> {
+  return route === V2_ROUTE
+    ? {
+      results: [{
+        action: block ? "block" : "allow",
+        source: block ? "model" : null,
+        confidence: block ? "very_high" : null,
+        severity: block ? "high" : null,
+        outcome: block ? "control_abuse" : null,
+        governance: null,
+        model_id: null,
+      }],
+    }
+    : {
+      prediction: block ? "MALICIOUS" : "BENIGN",
+      score: block ? 0.99 : 0.01,
+      threshold: 0.5,
+      primary_outcome: block ? "unsafe_agent_control" : "benign",
+    };
+}
+
 export async function startClassifier(
   blocks: (hook: string, serialized: string) => boolean,
   live?: LiveClassifier,
 ): Promise<ClassifierLoopback> {
   const attempts: ClassifierRequest[] = [];
-  const loopback = await startLoopback<Record<string, unknown>>(async (payload) => {
+  const loopback = await startLoopback<Record<string, unknown>>(async (payload, _index, route) => {
     const serialized = JSON.stringify(payload);
     const startedAt = performance.now();
     const attempt: ClassifierRequest = {
@@ -171,49 +207,72 @@ export async function startClassifier(
       marker: serialized.match(/NATIVE_[A-Z_]+/u)?.[0] ?? null,
     };
     attempts.push(attempt);
-    const verdict = live ? await liveVerdict(live, serialized, attempt) : undefined;
+    const upstream = live ? await liveVerdict(live, route, serialized, attempt) : undefined;
     attempt.durationMs = Math.round(performance.now() - startedAt);
-    if (live && !verdict) return { status: 502, type: "application/json", text: "{}" };
-    const block = verdict
-      ? verdict.prediction === "MALICIOUS" || verdict.governance?.action === "block"
-      : blocks(attempt.hook, serialized);
+    if (upstream && ROUTE_FALLBACK_STATUSES.has(upstream.status)) {
+      attempts.splice(attempts.indexOf(attempt), 1);
+      return jsonReply(upstream.status, {});
+    }
+    if (upstream && !upstream.verdict) return jsonReply(502, {});
+    const block = upstream?.verdict?.block ?? blocks(attempt.hook, serialized);
     attempt.decision = block ? "block" : "allow";
     attempt.outcome = "success";
-    return {
-      status: 200,
-      type: "application/json",
-      text: JSON.stringify(verdict ?? {
-        prediction: block ? "MALICIOUS" : "BENIGN",
-        score: block ? 0.99 : 0.01,
-        threshold: 0.5,
-        primary_outcome: block ? "unsafe_agent_control" : "benign",
-      }),
-    };
+    return jsonReply(200, upstream?.verdict?.body ?? loopbackVerdict(route, block));
   });
   return { ...loopback, attempts };
 }
 
-interface Verdict {
-  prediction: string;
-  mode?: string;
-  governance?: { action?: string };
+interface UpstreamVerdict {
+  body: Record<string, unknown>;
+  block: boolean;
+  upstream: NonNullable<ClassifierRequest["upstream"]>;
 }
 
-async function liveVerdict(live: LiveClassifier, body: string, attempt: ClassifierRequest): Promise<Verdict | undefined> {
-  const response = await (live.fetchImpl ?? fetch)(live.url, {
+function upstreamVerdict(body: unknown): UpstreamVerdict | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const verdict = body as Record<string, unknown> & { governance?: { action?: string } };
+  if (verdict.results !== undefined) {
+    const results = Array.isArray(verdict.results) ? verdict.results as Array<Record<string, unknown> | null> : [];
+    const action = results[0]?.action;
+    if (results.length !== 1 || typeof action !== "string") return undefined;
+    const source = results[0]?.source;
+    return {
+      body: verdict,
+      block: action !== "allow",
+      upstream: { action, source: typeof source === "string" ? source : null },
+    };
+  }
+  if (verdict.prediction !== "BENIGN" && verdict.prediction !== "MALICIOUS") return undefined;
+  const action = verdict.governance?.action ?? null;
+  return {
+    body: verdict,
+    block: verdict.prediction === "MALICIOUS" || action === "block",
+    upstream: { prediction: verdict.prediction, mode: typeof verdict.mode === "string" ? verdict.mode : null, action },
+  };
+}
+
+async function liveVerdict(
+  live: LiveClassifier,
+  route: string,
+  body: string,
+  attempt: ClassifierRequest,
+): Promise<{ status: number; verdict?: UpstreamVerdict }> {
+  const upstreamVersion = route === V2_ROUTE ? V2_ROUTE : V1_ROUTE;
+  const response = await (live.fetchImpl ?? fetch)(upstreamRoute(live.url, upstreamVersion), {
     method: "POST",
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
     headers: { "content-type": "application/json", "x-api-key": live.key },
     body,
   }).catch(() => undefined);
-  if (!response) return undefined;
+  if (!response) return { status: 502 };
+  if (upstreamVersion === V2_ROUTE && ROUTE_FALLBACK_STATUSES.has(response.status)) return { status: response.status };
   attempt.outcome = response.ok ? "invalid_response" : "http_error";
-  if (!response.ok) return undefined;
-  const verdict = await response.json().catch(() => undefined) as Verdict | undefined;
-  if (!verdict || !["BENIGN", "MALICIOUS"].includes(verdict.prediction)) return undefined;
-  attempt.upstream = { prediction: verdict.prediction, mode: verdict.mode ?? null, action: verdict.governance?.action ?? null };
-  return verdict;
+  if (!response.ok) return { status: 502 };
+  const verdict = upstreamVerdict(await response.json().catch(() => undefined));
+  if (!verdict) return { status: 502 };
+  attempt.upstream = verdict.upstream;
+  return { status: 200, verdict };
 }
 
 function classifierBlocker(scenario: Scenario, request: ClassifierRequest): string | undefined {

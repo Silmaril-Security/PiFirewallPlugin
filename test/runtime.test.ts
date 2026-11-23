@@ -5,6 +5,7 @@ import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/prom
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { Firewall, type ClassifyOptions } from "@silmaril-security/sdk";
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
@@ -281,6 +282,57 @@ test("runtime clears successful deadlines and cancels a stalled logical classifi
   assert.equal(signals[1]?.reason?.name, "TimeoutError");
   assert.ok(performance.now() - started < 1000);
   assert.notEqual(signals[1], signals[0]);
+});
+
+test("the Pi deadline cancels the pinned SDK fetch and retry wait", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const response of ["in-flight", "rate-limited"]) {
+      let attempts = 0;
+      let aborted = false;
+      let sdkCall: Promise<unknown> | undefined;
+      class ObservedFirewall {
+        private readonly client: Firewall;
+
+        constructor(options: ConstructorParameters<typeof Firewall>[0]) {
+          this.client = new Firewall({ ...options, timeoutMs: 10_000 });
+        }
+
+        classify(text: string, options?: ClassifyOptions) {
+          const pending = this.client.classify(text, options);
+          sdkCall = pending;
+          return pending.then((result) => ({ ...result }));
+        }
+      }
+      globalThis.fetch = async (_input, init) => {
+        const signal = init?.signal;
+        assert.ok(signal);
+        attempts++;
+        if (response === "rate-limited") return new Response(null, { status: 429 });
+        return new Promise((_, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(signal.reason);
+          }, { once: true });
+        });
+      };
+      const runtime = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_TIMEOUT_MS: "250" },
+        { firewallConstructor: ObservedFirewall, evidenceEmitter: async () => undefined },
+      );
+      assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
+      assert.ok(sdkCall);
+      await Promise.race([
+        assert.rejects(sdkCall, { name: "TimeoutError" }),
+        delay(1000, undefined, { ref: false }).then(() => assert.fail("SDK missed the deadline")),
+      ]);
+      assert.equal(attempts, 1);
+      assert.equal(aborted, response === "in-flight");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("actual pinned SDK preserves a governance-only block response", async () => {

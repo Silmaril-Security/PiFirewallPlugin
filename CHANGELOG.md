@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.11 (release preparation)
+
+- Bound each logical Pi classification with one aggregate, clearable deadline.
+  Its signal cancels the pinned SDK 0.8.2 request and
+  retry wait while the configured SDK timeout remains the per-attempt limit.
+- Preserve fail-open cancellation and failure handling and all existing
+  Pi-native typed block and content-replacement results.
+
 ## 0.2.10
 
 - Ship [`v0.2.10`](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.10)

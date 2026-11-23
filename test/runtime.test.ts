@@ -5,7 +5,8 @@ import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/prom
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { Firewall } from "@silmaril-security/sdk";
+import { setTimeout as delay } from "node:timers/promises";
+import { Firewall, type ClassifyOptions } from "@silmaril-security/sdk";
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 import registerExtension from "../extensions/firewall.ts";
@@ -242,6 +243,98 @@ test("the pinned SDK receives the configured timeoutMs option", () => {
   assert.equal(firewall.timeoutMs, 375);
 });
 
+test("runtime clears successful deadlines and cancels a stalled logical classification", async () => {
+  let behavior: "success" | "stalled" = "success";
+  const signals: AbortSignal[] = [];
+  class DeadlineFirewall {
+    constructor(_options: unknown) {}
+
+    async classify(
+      _text: string,
+      options?: ClassifyOptions,
+    ): Promise<Record<string, unknown>> {
+      assert.ok(options?.signal);
+      signals.push(options.signal);
+      return behavior === "success"
+        ? { prediction: "BENIGN", score: 0.01, threshold: 0.5 }
+        : new Promise<Record<string, unknown>>(() => {});
+    }
+  }
+  const runtime = new PiFirewallRuntime(
+    { sendMessage: () => undefined },
+    { ...BASE_ENV, SILMARIL_TIMEOUT_MS: "250" },
+    {
+      firewallConstructor: DeadlineFirewall,
+      evidenceEmitter: async () => undefined,
+    },
+  );
+
+  assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
+  assert.ok(signals[0] instanceof AbortSignal);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(signals[0]?.aborted, false);
+
+  behavior = "stalled";
+  const started = performance.now();
+  assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
+  assert.ok(signals[1] instanceof AbortSignal);
+  assert.equal(signals[1]?.aborted, true);
+  assert.equal(signals[1]?.reason?.name, "TimeoutError");
+  assert.ok(performance.now() - started < 1000);
+  assert.notEqual(signals[1], signals[0]);
+});
+
+test("the Pi deadline cancels the pinned SDK fetch and retry wait", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const response of ["in-flight", "rate-limited"]) {
+      let attempts = 0;
+      let aborted = false;
+      let sdkCall: Promise<unknown> | undefined;
+      class ObservedFirewall {
+        private readonly client: Firewall;
+
+        constructor(options: ConstructorParameters<typeof Firewall>[0]) {
+          this.client = new Firewall({ ...options, timeoutMs: 10_000 });
+        }
+
+        classify(text: string, options?: ClassifyOptions) {
+          const pending = this.client.classify(text, options);
+          sdkCall = pending;
+          return pending.then((result) => ({ ...result }));
+        }
+      }
+      globalThis.fetch = async (_input, init) => {
+        const signal = init?.signal;
+        assert.ok(signal);
+        attempts++;
+        if (response === "rate-limited") return new Response(null, { status: 429 });
+        return new Promise((_, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(signal.reason);
+          }, { once: true });
+        });
+      };
+      const runtime = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_TIMEOUT_MS: "250" },
+        { firewallConstructor: ObservedFirewall, evidenceEmitter: async () => undefined },
+      );
+      assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
+      assert.ok(sdkCall);
+      await Promise.race([
+        assert.rejects(sdkCall, { name: "TimeoutError" }),
+        delay(1000, undefined, { ref: false }).then(() => assert.fail("SDK missed the deadline")),
+      ]);
+      assert.equal(attempts, 1);
+      assert.equal(aborted, response === "in-flight");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("actual pinned SDK preserves a governance-only block response", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({
@@ -381,7 +474,7 @@ test("governance-only blocks use all Pi-native boundaries and preserve benign mo
     event.prediction === "benign"
     && event.policyDecision === "block"
     && event.blockUnavailable === undefined
-    && event.provenance.pluginVersion === "0.2.10"
+    && event.provenance.pluginVersion === "0.2.11"
   )));
 });
 
@@ -710,7 +803,7 @@ async function captureStderr(run: () => Promise<void>): Promise<string> {
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.name, "@silmaril-security/pi-firewall-plugin");
-  assert.equal(packageJson.version, "0.2.10");
+  assert.equal(packageJson.version, "0.2.11");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);

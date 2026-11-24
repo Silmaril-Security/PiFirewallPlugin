@@ -730,6 +730,34 @@ test("local evidence records known confidence and severity and never model score
   }
 });
 
+test("local evidence maps each harmful SDK outcome to its consequence category", () => {
+  const build = (outcome: string | undefined) => buildLocalProtectionEvent({
+    pluginName: "pi-firewall-plugin",
+    pluginVersion: "0.3.0",
+    hook: "tool_result",
+    mode: "block",
+    classification: outcome === undefined ? { action: "block", source: "model" } : { action: "block", source: "model", outcome },
+    policyDecision: "block",
+    nativeAction: "content_replaced",
+  });
+  const categories: Array<[string | undefined, string]> = [
+    ["secret_exposure", "credential_exposure"],
+    ["information_disclosure", "sensitive_data_exposure"],
+    ["system_compromise", "code_execution"],
+    ["service_disruption", "destructive_change"],
+    ["control_abuse", "unsafe_agent_control"],
+    ["prompt_injection", "unsafe_agent_control"],
+    ["code_generation", "other"],
+    [undefined, "unknown"],
+  ];
+  for (const [outcome, category] of categories) {
+    const event = build(outcome);
+    assert.equal(event.riskClass, category, String(outcome));
+    assert.equal(event.attemptedConsequence?.category, category);
+  }
+  assert.equal(build("control_abuse").attemptedConsequence?.summary, "Potential unsafe agent-control behavior detected.");
+});
+
 test("local evidence provenance versions are bounded the way the app ingests them", () => {
   const provenance = (classification: unknown) => buildLocalProtectionEvent({
     pluginName: "pi-firewall-plugin",

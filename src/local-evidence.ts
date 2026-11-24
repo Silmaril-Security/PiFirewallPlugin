@@ -168,15 +168,20 @@ function normalizeCategory(value: string | undefined): ProtectionCategory {
   const mapping: Record<string, ProtectionCategory> = {
     secret_exposure: "credential_exposure",
     credential_exposure: "credential_exposure",
+    information_disclosure: "sensitive_data_exposure",
     sensitive_data_exposure: "sensitive_data_exposure",
     data_exfiltration: "sensitive_data_exposure",
     code_execution: "code_execution",
+    system_compromise: "code_execution",
     destructive_change: "destructive_change",
     destructive_action: "destructive_change",
+    service_disruption: "destructive_change",
     external_communication: "external_communication",
     privilege_change: "privilege_change",
     privilege_escalation: "privilege_change",
     unsafe_agent_control: "unsafe_agent_control",
+    prompt_injection: "unsafe_agent_control",
+    control_abuse: "unsafe_agent_control",
   };
   return mapping[normalized] ?? (normalized ? "other" : "unknown");
 }

@@ -307,7 +307,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: reader
         with:
-          client-id: ${{ vars.CUSTOMER_TESTS_APP_CLIENT_ID }}
+          client-id: ${{ secrets.CUSTOMER_TESTS_APP_CLIENT_ID }}
           private-key: ${{ secrets.CUSTOMER_TESTS_APP_PRIVATE_KEY }}
           owner: Silmaril-Security
           repositories: SilmarilCustomerTests
@@ -326,7 +326,7 @@ jobs:
       - name: Exercise the exact release candidate
         uses: ./_customer/actions/release-acceptance
         env:
-          CUSTOMER_NATIVE_API_URL: ${{ vars.CUSTOMER_API_URL }}
+          CUSTOMER_NATIVE_API_URL: ${{ secrets.CUSTOMER_API_URL }}
           CUSTOMER_NATIVE_API_KEY: ${{ secrets.CUSTOMER_API_KEY }}
         with:
           product: PiFirewallPlugin
@@ -484,7 +484,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: reader
         with:
-          client-id: ${{ vars.CUSTOMER_TESTS_APP_CLIENT_ID }}
+          client-id: ${{ secrets.CUSTOMER_TESTS_APP_CLIENT_ID }}
           private-key: ${{ secrets.CUSTOMER_TESTS_APP_PRIVATE_KEY }}
           owner: Silmaril-Security
           repositories: SilmarilCustomerTests
@@ -541,7 +541,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: reader
         with:
-          client-id: ${{ vars.CUSTOMER_TESTS_APP_CLIENT_ID }}
+          client-id: ${{ secrets.CUSTOMER_TESTS_APP_CLIENT_ID }}
           private-key: ${{ secrets.CUSTOMER_TESTS_APP_PRIVATE_KEY }}
           owner: Silmaril-Security
           repositories: SilmarilCustomerTests

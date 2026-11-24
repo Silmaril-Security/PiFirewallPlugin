@@ -240,13 +240,15 @@ test("the live classifier proxy relays each classify version to the matching ups
 test("the live classifier proxy passes a missing version 2 route to the SDK and records only the fallback", async () => {
   for (const status of [403, 404, 405]) {
     const upstreamUrls: string[] = [];
+    const refusal = Response.json({ message: "Missing Authentication Token" }, { status });
     const classifier = await startClassifier(() => false, {
       url: "https://classifier.invalid/classify",
       key: "unit-test-key",
       fetchImpl: async (input) => {
         upstreamUrls.push(String(input));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         return String(input).endsWith(V2_ROUTE)
-          ? Response.json({ message: "Missing Authentication Token" }, { status })
+          ? refusal
           : Response.json({ prediction: "MALICIOUS", mode: "shadow" });
       },
     });
@@ -267,6 +269,8 @@ test("the live classifier proxy passes a missing version 2 route to the SDK and 
       classifier.attempts.map((attempt) => [attempt.outcome, attempt.decision, attempt.upstream]),
       Array(2).fill(["success", "block", { prediction: "MALICIOUS", mode: "shadow", action: null }]),
     );
+    assert.equal(refusal.bodyUsed, true);
+    assert.ok(classifier.attempts[0]!.durationMs >= 300, `${classifier.attempts[0]!.durationMs} ms`);
   }
 });
 

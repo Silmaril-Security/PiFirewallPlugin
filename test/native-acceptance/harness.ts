@@ -196,9 +196,11 @@ export async function startClassifier(
   live?: LiveClassifier,
 ): Promise<ClassifierLoopback> {
   const attempts: ClassifierRequest[] = [];
+  const refusedProbeStarts = new Map<string, number>();
   const loopback = await startLoopback<Record<string, unknown>>(async (payload, _index, route) => {
     const serialized = JSON.stringify(payload);
-    const startedAt = performance.now();
+    const startedAt = refusedProbeStarts.get(serialized) ?? performance.now();
+    refusedProbeStarts.delete(serialized);
     const attempt: ClassifierRequest = {
       hook: String(payload.hook),
       decision: null,
@@ -211,6 +213,7 @@ export async function startClassifier(
     attempt.durationMs = Math.round(performance.now() - startedAt);
     if (upstream && ROUTE_FALLBACK_STATUSES.has(upstream.status)) {
       attempts.splice(attempts.indexOf(attempt), 1);
+      refusedProbeStarts.set(serialized, startedAt);
       return jsonReply(upstream.status, {});
     }
     if (upstream && !upstream.verdict) return jsonReply(502, {});
@@ -266,7 +269,10 @@ async function liveVerdict(
     body,
   }).catch(() => undefined);
   if (!response) return { status: 502 };
-  if (upstreamVersion === V2_ROUTE && ROUTE_FALLBACK_STATUSES.has(response.status)) return { status: response.status };
+  if (upstreamVersion === V2_ROUTE && ROUTE_FALLBACK_STATUSES.has(response.status)) {
+    await response.body?.cancel();
+    return { status: response.status };
+  }
   attempt.outcome = response.ok ? "invalid_response" : "http_error";
   if (!response.ok) return { status: 502 };
   const verdict = upstreamVerdict(await response.json().catch(() => undefined));

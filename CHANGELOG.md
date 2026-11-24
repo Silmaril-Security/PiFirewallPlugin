@@ -23,6 +23,9 @@
   `provenance.policyVersion` from the governance decision's policy version,
   keeping `pi-plugin-policy-v1` for decisions without governance. Both are
   stripped of control and format characters and cut to 128 UTF-8 bytes.
+- Map the SDK's harmful outcomes (`control_abuse`, `prompt_injection`,
+  `information_disclosure`, `system_compromise`, `service_disruption`) to
+  their local evidence consequence categories instead of `other`.
 - Report `action` and `source` in debug diagnostics in place of `prediction`.
 - Serve `/v2/classify` with a version 2 body and `/classify` with a version 1
   body from the native acceptance classifier, and relay each route to the

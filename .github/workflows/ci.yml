@@ -56,7 +56,7 @@ jobs:
         env:
           NATIVE_ACCEPTANCE_RECEIPT: ${{ runner.temp }}/native-acceptance/live-receipt.json
           CUSTOMER_NATIVE_CLASSIFIER: live
-          CUSTOMER_NATIVE_API_URL: ${{ vars.CUSTOMER_API_URL }}
+          CUSTOMER_NATIVE_API_URL: ${{ secrets.CUSTOMER_API_URL }}
           CUSTOMER_NATIVE_API_KEY: ${{ secrets.CUSTOMER_API_KEY }}
         run: npm run test:native
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

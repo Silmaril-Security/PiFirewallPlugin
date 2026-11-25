@@ -1,6 +1,6 @@
 {
   "name": "@silmaril-security/pi-firewall-plugin",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "description": "Silmaril Firewall lifecycle protection for Pi coding agents.",
   "type": "module",
   "license": "Apache-2.0",
@@ -36,7 +36,7 @@
     "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {
-    "@silmaril-security/sdk": "0.8.2"
+    "@silmaril-security/sdk": "1.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

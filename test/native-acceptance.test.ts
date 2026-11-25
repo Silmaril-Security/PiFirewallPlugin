@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { Firewall } from "@silmaril-security/sdk";
 import {
   BLOCK_MESSAGE,
   CLASSIFY_DEADLINE_MS,
@@ -18,8 +19,12 @@ import {
   sameFiles,
   scenariosFor,
   startCandidateRegistry,
+  loopbackVerdict,
   startClassifier,
   startLoopback,
+  upstreamRoute,
+  V1_ROUTE,
+  V2_ROUTE,
   type ClassifierRequest,
   type Scenario,
 } from "./native-acceptance/harness.ts";
@@ -152,11 +157,130 @@ test("the live classifier proxy records the upstream verdict without the custome
   assert.ok(!JSON.stringify(classifier.attempts).includes("unit-test-key"));
 });
 
+test("the loopback classifier serves both classify versions to the actual SDK", async () => {
+  assert.deepEqual(loopbackVerdict(V2_ROUTE, true), {
+    results: [{
+      action: "block",
+      source: "model",
+      confidence: "very_high",
+      severity: "high",
+      outcome: "control_abuse",
+      governance: null,
+      model_id: null,
+    }],
+  });
+  assert.deepEqual(loopbackVerdict(V1_ROUTE, true), {
+    prediction: "MALICIOUS",
+    score: 0.99,
+    threshold: 0.5,
+    primary_outcome: "unsafe_agent_control",
+  });
+  assert.deepEqual((loopbackVerdict(V2_ROUTE, false).results as Array<{ action: string }>)[0]?.action, "allow");
+  assert.equal(loopbackVerdict(V1_ROUTE, false).prediction, "BENIGN");
+
+  const classifier = await startClassifier((hook) => hook === "tool_response");
+  try {
+    for (const apiUrl of [classifier.url, `${classifier.url}${V1_ROUTE}`, `${classifier.url}${V2_ROUTE}`]) {
+      const firewall = new Firewall({ apiKey: "unit-test-key", apiUrl, timeoutMs: 1_000 });
+      const blocked = await firewall.classify("tool output", { hook: "tool_response" });
+      assert.deepEqual(
+        [blocked.action, blocked.source, blocked.confidence, blocked.severity],
+        ["block", "model", "very_high", "high"],
+      );
+      assert.equal((await firewall.classify("tool input", { hook: "tool_call" })).action, "allow");
+    }
+    const legacy = await fetch(`${classifier.url}${V1_ROUTE}`, {
+      method: "POST",
+      body: JSON.stringify({ hook: "tool_response", text: "tool output" }),
+    });
+    assert.equal((await legacy.json() as { prediction: string }).prediction, "MALICIOUS");
+  } finally {
+    await classifier.close();
+  }
+  assert.deepEqual(
+    classifier.attempts.map((attempt) => attempt.decision),
+    ["block", "allow", "block", "allow", "block", "allow", "block"],
+  );
+});
+
+test("the live classifier proxy relays each classify version to the matching upstream route", async () => {
+  assert.equal(
+    upstreamRoute("https://classifier.invalid/stage/classify?tenant=acme", V2_ROUTE),
+    "https://classifier.invalid/stage/v2/classify?tenant=acme",
+  );
+  assert.equal(upstreamRoute("https://classifier.invalid/v2/classify/", V1_ROUTE), "https://classifier.invalid/classify");
+  assert.equal(upstreamRoute("https://classifier.invalid/base", V2_ROUTE), "https://classifier.invalid/base/v2/classify");
+
+  const upstreamUrls: string[] = [];
+  const verdict = { results: [{ action: "block", source: "model", confidence: "high" }] };
+  const classifier = await startClassifier(() => false, {
+    url: "https://classifier.invalid/classify",
+    key: "unit-test-key",
+    fetchImpl: async (input) => {
+      upstreamUrls.push(String(input));
+      return Response.json(verdict);
+    },
+  });
+  try {
+    const firewall = new Firewall({ apiKey: "unit-test-key", apiUrl: classifier.url, timeoutMs: 1_000 });
+    assert.equal((await firewall.classify(LIVE_ATTACK, { hook: "tool_response" })).action, "block");
+  } finally {
+    await classifier.close();
+  }
+  assert.deepEqual(upstreamUrls, ["https://classifier.invalid/v2/classify"]);
+  assert.deepEqual(classifier.attempts.map(({ durationMs: _durationMs, ...attempt }) => attempt), [{
+    hook: "tool_response",
+    decision: "block",
+    outcome: "success",
+    marker: null,
+    upstream: { action: "block", source: "model" },
+  }]);
+});
+
+test("the live classifier proxy passes a missing version 2 route to the SDK and records only the fallback", async () => {
+  for (const status of [403, 404, 405]) {
+    const upstreamUrls: string[] = [];
+    const refusal = Response.json({ message: "Missing Authentication Token" }, { status });
+    const classifier = await startClassifier(() => false, {
+      url: "https://classifier.invalid/classify",
+      key: "unit-test-key",
+      fetchImpl: async (input) => {
+        upstreamUrls.push(String(input));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return String(input).endsWith(V2_ROUTE)
+          ? refusal
+          : Response.json({ prediction: "MALICIOUS", mode: "shadow" });
+      },
+    });
+    try {
+      const firewall = new Firewall({ apiKey: "unit-test-key", apiUrl: classifier.url, timeoutMs: 1_000 });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        assert.equal((await firewall.classify(LIVE_ATTACK, { hook: "tool_response" })).action, "block");
+      }
+    } finally {
+      await classifier.close();
+    }
+    assert.deepEqual(upstreamUrls, [
+      "https://classifier.invalid/v2/classify",
+      "https://classifier.invalid/classify",
+      "https://classifier.invalid/classify",
+    ]);
+    assert.deepEqual(
+      classifier.attempts.map((attempt) => [attempt.outcome, attempt.decision, attempt.upstream]),
+      Array(2).fill(["success", "block", { prediction: "MALICIOUS", mode: "shadow", action: null }]),
+    );
+    assert.equal(refusal.bodyUsed, true);
+    assert.ok(classifier.attempts[0]!.durationMs >= 300, `${classifier.attempts[0]!.durationMs} ms`);
+  }
+});
+
 test("live classifier failures are recorded without upstream detail", async () => {
   const replies: Array<() => Promise<Response>> = [
     async () => new Response("upstream detail", { status: 503 }),
     async () => new Response("upstream detail"),
     async () => Response.json({ prediction: "UNKNOWN" }),
+    async () => Response.json({ results: [{ source: "model" }] }),
+    async () => Response.json({ results: [{ action: "allow" }, { action: "block" }] }),
     async () => Promise.reject(new Error("upstream detail")),
   ];
   let upstream = replies[0] as () => Promise<Response>;
@@ -176,6 +300,8 @@ test("live classifier failures are recorded without upstream detail", async () =
   }
   assert.deepEqual(classifier.attempts.map((attempt) => [attempt.outcome, attempt.decision, attempt.upstream]), [
     ["http_error", null, undefined],
+    ["invalid_response", null, undefined],
+    ["invalid_response", null, undefined],
     ["invalid_response", null, undefined],
     ["invalid_response", null, undefined],
     ["transport_error", null, undefined],

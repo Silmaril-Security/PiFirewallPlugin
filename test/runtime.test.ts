@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { Firewall, type ClassifyOptions } from "@silmaril-security/sdk";
+import { Firewall, type BlockResult, type ClassifyOptions } from "@silmaril-security/sdk";
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 import registerExtension from "../extensions/firewall.ts";
@@ -40,6 +40,20 @@ const BASE_ENV = {
   SILMARIL_DEBUG: "false",
 };
 
+const ALLOW: BlockResult = { action: "allow" };
+const MODEL_BLOCK: BlockResult = {
+  action: "block",
+  source: "model",
+  confidence: "very_high",
+  severity: "high",
+  outcome: "control_abuse",
+};
+const GOVERNANCE_BLOCK: BlockResult = {
+  action: "block",
+  source: "governance",
+  governance: { action: "block", policyVersion: "synthetic-policy" },
+};
+
 function context(notifications: string[] = []): ExtensionContext {
   return {
     hasUI: true,
@@ -49,7 +63,7 @@ function context(notifications: string[] = []): ExtensionContext {
   } as unknown as ExtensionContext;
 }
 
-function dependencies(results: Array<Record<string, unknown> | Error>, events: unknown[] = [], calls: unknown[] = []) {
+function dependencies(results: Array<BlockResult | Error>, events: unknown[] = [], calls: unknown[] = []) {
   class FakeFirewall {
     constructor(options: unknown) {
       calls.push({ constructor: options });
@@ -58,7 +72,7 @@ function dependencies(results: Array<Record<string, unknown> | Error>, events: u
       calls.push({ text, options });
       const result = results.shift();
       if (result instanceof Error) throw result;
-      return result ?? { prediction: "BENIGN", score: 0.01, threshold: 0.5 };
+      return result ?? ALLOW;
     }
   }
   return {
@@ -104,14 +118,14 @@ function assistantMessage(text = "assistant output"): MessageEndEvent {
 }
 
 test("the mode sent on the request is authoritative and backend mode controls only when omitted", () => {
-  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "block"), "block");
-  assert.equal(effectiveMode({ prediction: "MALICIOUS" }, "block"), "block");
+  assert.equal(effectiveMode({ ...MODEL_BLOCK, mode: "warn" }, "block"), "block");
+  assert.equal(effectiveMode(MODEL_BLOCK, "block"), "block");
   // A legacy backend can ignore the new request field and return its configured
   // Block mode. The plugin must not escalate an explicit Warn or Shadow pilot.
-  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "block" }, "warn"), "warn");
-  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }, "shadow"), "shadow");
-  assert.equal(effectiveMode({ prediction: "MALICIOUS", mode: "warn" }), "warn");
-  assert.equal(effectiveMode({ prediction: "MALICIOUS" }), "shadow");
+  assert.equal(effectiveMode({ ...MODEL_BLOCK, mode: "block" }, "warn"), "warn");
+  assert.equal(effectiveMode({ ...MODEL_BLOCK, mode: "warn" }, "shadow"), "shadow");
+  assert.equal(effectiveMode({ ...MODEL_BLOCK, mode: "warn" }), "warn");
+  assert.equal(effectiveMode(MODEL_BLOCK), "shadow");
 });
 
 test("runtime configuration defaults safely", () => {
@@ -252,12 +266,12 @@ test("runtime clears successful deadlines and cancels a stalled logical classifi
     async classify(
       _text: string,
       options?: ClassifyOptions,
-    ): Promise<Record<string, unknown>> {
+    ): Promise<BlockResult> {
       assert.ok(options?.signal);
       signals.push(options.signal);
       return behavior === "success"
-        ? { prediction: "BENIGN", score: 0.01, threshold: 0.5 }
-        : new Promise<Record<string, unknown>>(() => {});
+        ? ALLOW
+        : new Promise<BlockResult>(() => {});
     }
   }
   const runtime = new PiFirewallRuntime(
@@ -335,37 +349,152 @@ test("the Pi deadline cancels the pinned SDK fetch and retry wait", async () => 
   }
 });
 
-test("actual pinned SDK preserves a governance-only block response", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    prediction: "BENIGN",
-    score: 0.01,
+const ATTACK_TEXT = "synthetic attack";
+const GOVERNED_TEXT = "synthetic governed action";
+const GOVERNANCE_WIRE = { action: "block", rule_id: "synthetic-rule", policy_version: "synthetic-policy" };
+
+function classifierSource(text: string): "model" | "governance" | undefined {
+  return text.includes(GOVERNED_TEXT) ? "governance" : text.includes(ATTACK_TEXT) ? "model" : undefined;
+}
+
+function version2Body(text: string): Record<string, unknown> {
+  const source = classifierSource(text);
+  return {
+    results: [{
+      action: source ? "block" : "allow",
+      source: source ?? null,
+      confidence: source === "model" ? "very_high" : null,
+      severity: source === "model" ? "critical" : null,
+      outcome: source === "model" ? "secret_exposure" : null,
+      governance: source === "governance" ? GOVERNANCE_WIRE : null,
+      model_id: "synthetic-model",
+    }],
+  };
+}
+
+function version1Body(text: string): Record<string, unknown> {
+  const source = classifierSource(text);
+  return {
+    prediction: source === "model" ? "MALICIOUS" : "BENIGN",
+    score: source === "model" ? 0.99 : 0.01,
     threshold: 0.5,
-    governance: {
-      action: "block",
-      rule_id: "synthetic-rule",
-      policy_version: "synthetic-policy",
-    },
-  }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+    primary_outcome: source === "model" ? "secret_exposure" : "benign",
+    outcome_scores: source === "model" ? { secret_exposure: 0.99 } : {},
+    ...(source === "governance" ? { governance: GOVERNANCE_WIRE } : {}),
+    model_id: "synthetic-model",
+  };
+}
+
+const CLASSIFIER_DEPLOYMENTS: Record<string, {
+  routes: string[];
+  respond(pathname: string, text: string): Response;
+}> = {
+  "version 2 route": {
+    routes: ["/v2/classify"],
+    respond: (_pathname, text) => Response.json(version2Body(text)),
+  },
+  "version 1 route only": {
+    routes: ["/v2/classify", "/classify"],
+    respond: (pathname, text) => pathname === "/classify"
+      ? Response.json(version1Body(text))
+      : Response.json({ message: "Not Found" }, { status: 404 }),
+  },
+  "version 2 route answering a version 1 body": {
+    routes: ["/v2/classify"],
+    respond: (_pathname, text) => Response.json(version1Body(text)),
+  },
+};
+
+async function withClassifierDeployment(
+  respond: (pathname: string, text: string) => Response,
+  run: (pathnames: string[]) => Promise<void>,
+): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const pathnames: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const { pathname } = new URL(String(input));
+    pathnames.push(pathname);
+    return respond(pathname, (JSON.parse(String(init?.body)) as { text: string }).text);
+  };
   try {
-    const firewall = new Firewall({
-      apiKey: "test-key",
-      apiUrl: "https://firewall.example/classify",
-      timeoutMs: 375,
-    });
-    const result = await firewall.classify("synthetic input", { hook: "user_input" });
-    assert.equal(result.prediction, "BENIGN");
-    assert.deepEqual(result.governance, {
-      action: "block",
-      ruleId: "synthetic-rule",
-      policyVersion: "synthetic-policy",
-    });
-    assert.equal(isPolicyBlockCandidate(result), true);
+    await run(pathnames);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+}
+
+test("actual SDK 1.0.0 returns the decision on every classifier deployment generation", async () => {
+  for (const [name, deployment] of Object.entries(CLASSIFIER_DEPLOYMENTS)) {
+    await withClassifierDeployment(deployment.respond, async (pathnames) => {
+      const firewall = new Firewall({
+        apiKey: "test-key",
+        apiUrl: "https://firewall.example/classify",
+        timeoutMs: 375,
+      });
+      const blocked = await firewall.classify(ATTACK_TEXT, { hook: "user_input" });
+      assert.deepEqual(
+        { action: blocked.action, source: blocked.source, outcome: blocked.outcome },
+        { action: "block", source: "model", outcome: "secret_exposure" },
+        name,
+      );
+      assert.deepEqual(
+        [blocked.confidence, blocked.severity],
+        name === "version 2 route" ? ["very_high", "critical"] : [undefined, undefined],
+        name,
+      );
+      assert.equal(isPolicyBlockCandidate(blocked), true, name);
+      const governed = await firewall.classify(GOVERNED_TEXT, { hook: "tool_call" });
+      assert.equal(governed.source, "governance", name);
+      assert.deepEqual(governed.governance, {
+        action: "block",
+        ruleId: "synthetic-rule",
+        policyVersion: "synthetic-policy",
+      }, name);
+      assert.equal(isPolicyBlockCandidate(governed), true, name);
+      assert.equal(isPolicyBlockCandidate(await firewall.classify("hello", { hook: "user_input" })), false, name);
+      assert.deepEqual([...new Set(pathnames)], deployment.routes, name);
+    });
+  }
+});
+
+test("a block is enforced through the actual SDK on every classifier deployment generation", async () => {
+  for (const [name, deployment] of Object.entries(CLASSIFIER_DEPLOYMENTS)) {
+    await withClassifierDeployment(deployment.respond, async (pathnames) => {
+      const events: any[] = [];
+      const runtime = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_MODE: "block" },
+        { firewallConstructor: Firewall, evidenceEmitter: async (event) => { events.push(event); } },
+      );
+
+      assert.deepEqual(await runtime.handleInput(inputEvent(ATTACK_TEXT), context()), { action: "handled" }, name);
+      assert.deepEqual(await runtime.handleToolCall(toolCall(), context()), undefined, name);
+      const resultPatch = await runtime.handleToolResult(toolResult(ATTACK_TEXT), context());
+      assert.equal(
+        (resultPatch?.content?.[0] as { text?: string })?.text,
+        "Silmaril Firewall blocked potentially malicious content.",
+        name,
+      );
+      const governedPatch = await runtime.handleToolResult(toolResult(GOVERNED_TEXT), context());
+      assert.equal(
+        (governedPatch?.content?.[0] as { text?: string })?.text,
+        "Silmaril Firewall blocked this request under governance policy.",
+        name,
+      );
+      assert.deepEqual(await runtime.handleInput(inputEvent("hello"), context()), { action: "continue" }, name);
+
+      assert.deepEqual(
+        events.map((event) => [event.prediction, event.policyDecision]),
+        [["malicious", "block"], ["benign", "allow"], ["malicious", "block"], ["benign", "block"], ["benign", "allow"]],
+        name,
+      );
+      assert.deepEqual(
+        [events[0].confidence, events[0].severity],
+        name === "version 2 route" ? ["very_high", "critical"] : [undefined, undefined],
+        name,
+      );
+      assert.deepEqual([...new Set(pathnames)], deployment.routes, name);
+    });
   }
 });
 
@@ -381,7 +510,7 @@ test("extension registers only the four intended Pi lifecycle events", () => {
 
 test("extension-originated input is ignored to prevent recursion", async () => {
   const calls: unknown[] = [];
-  const runtime = new PiFirewallRuntime({ sendMessage: () => undefined }, BASE_ENV, dependencies([{ prediction: "MALICIOUS" }], [], calls));
+  const runtime = new PiFirewallRuntime({ sendMessage: () => undefined }, BASE_ENV, dependencies([MODEL_BLOCK], [], calls));
   assert.deepEqual(await runtime.handleInput(inputEvent("ignored", "extension"), context()), { action: "continue" });
   assert.equal(calls.length, 0);
 });
@@ -392,7 +521,7 @@ test("shadow mode observes all native boundaries without mutation", async () => 
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     BASE_ENV,
-    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS", score: 0.9, threshold: 0.5 })), events, calls),
+    dependencies(Array.from({ length: 4 }, () => MODEL_BLOCK), events, calls),
   );
   assert.deepEqual(await runtime.handleInput(inputEvent("raw input"), context()), { action: "continue" });
   assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
@@ -410,7 +539,7 @@ test("block mode uses Pi-native handled, block, and content replacements", async
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
-    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS" })), events),
+    dependencies(Array.from({ length: 4 }, () => MODEL_BLOCK), events),
   );
   assert.deepEqual(await runtime.handleInput(inputEvent("input"), context(notifications)), { action: "handled" });
   assert.match(notifications[0] ?? "", /blocked potentially malicious/u);
@@ -440,17 +569,10 @@ test("block mode uses Pi-native handled, block, and content replacements", async
 test("governance-only blocks use all Pi-native boundaries and preserve benign model evidence", async () => {
   const notifications: string[] = [];
   const events: any[] = [];
-  const governanceOnly = {
-    prediction: "BENIGN",
-    score: 0.01,
-    threshold: 0.5,
-    primaryOutcome: "benign",
-    governance: { action: "block", policyVersion: "synthetic-policy" },
-  };
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_MODE: "block" },
-    dependencies(Array.from({ length: 4 }, () => governanceOnly), events),
+    dependencies(Array.from({ length: 4 }, () => GOVERNANCE_BLOCK), events),
   );
 
   assert.deepEqual(await runtime.handleInput(inputEvent("input"), context(notifications)), { action: "handled" });
@@ -474,20 +596,16 @@ test("governance-only blocks use all Pi-native boundaries and preserve benign mo
     event.prediction === "benign"
     && event.policyDecision === "block"
     && event.blockUnavailable === undefined
-    && event.provenance.pluginVersion === "0.2.11"
+    && event.provenance.pluginVersion === "0.3.0"
   )));
 });
 
 test("governance-only candidates retain Shadow and Warn mode behavior", async () => {
-  const governanceOnly = {
-    prediction: "BENIGN",
-    governance: { action: "block", policyVersion: "synthetic-policy" },
-  };
   const shadowEvents: any[] = [];
   const shadow = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_MODE: "shadow" },
-    dependencies([governanceOnly], shadowEvents),
+    dependencies([GOVERNANCE_BLOCK], shadowEvents),
   );
   assert.equal(await shadow.handleToolCall(toolCall(), context()), undefined);
   assert.equal(shadowEvents[0].policyDecision, "monitor");
@@ -497,7 +615,7 @@ test("governance-only candidates retain Shadow and Warn mode behavior", async ()
   const warn = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_MODE: "warn" },
-    dependencies([governanceOnly], warnEvents),
+    dependencies([GOVERNANCE_BLOCK], warnEvents),
   );
   const transformed = await warn.handleInput(inputEvent("input"), context());
   assert.equal(transformed.action, "transform");
@@ -511,7 +629,7 @@ test("warn mode surfaces bounded same-turn context where Pi supports it", async 
   const runtime = new PiFirewallRuntime(
     { sendMessage: (message, options) => { messages.push({ message, options }); } },
     { ...BASE_ENV, SILMARIL_MODE: "warn" },
-    dependencies(Array.from({ length: 4 }, () => ({ prediction: "MALICIOUS", mode: "warn", score: 0.99 })), events),
+    dependencies(Array.from({ length: 4 }, (): BlockResult => ({ ...MODEL_BLOCK, mode: "warn" })), events),
   );
   const images = [{ type: "image", data: "cGl4ZWw=", mimeType: "image/png" }] as NonNullable<InputEvent["images"]>;
   const transformed = await runtime.handleInput({
@@ -530,31 +648,171 @@ test("warn mode surfaces bounded same-turn context where Pi supports it", async 
   assert.doesNotMatch(JSON.stringify(events), /raw input|raw result|raw output/u);
 });
 
-test("policy candidate requires exact MALICIOUS or exact governance block", async () => {
-  for (const prediction of ["malicious", "UNKNOWN", undefined]) {
+test("policy candidate follows the decision action and nothing else", async () => {
+  const governance = GOVERNANCE_BLOCK.governance!;
+  const allowed: BlockResult[] = [
+    ALLOW,
+    { ...MODEL_BLOCK, action: "allow" },
+    { action: "allow", governance },
+  ];
+  for (const result of allowed) {
+    assert.equal(isPolicyBlockCandidate(result), false);
     const runtime = new PiFirewallRuntime(
       { sendMessage: () => undefined },
       { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
-      dependencies([{ prediction }]),
+      dependencies([result]),
     );
     assert.deepEqual(await runtime.handleInput(inputEvent("input"), context()), { action: "continue" });
   }
-  assert.equal(isPolicyBlockCandidate({
-    prediction: "BENIGN",
-    governance: { action: "block", policyVersion: "synthetic-policy" },
-  }), true);
-  assert.equal(formatBlockMessage({
-    prediction: "BENIGN",
-    governance: { action: "block", policyVersion: "synthetic-policy" },
-  }), "Silmaril Firewall blocked this request under governance policy.");
-  for (const governance of [
-    undefined,
-    { action: "allow" },
-    { action: "BLOCK" },
-    { action: true },
-    "block",
-  ]) {
-    assert.equal(isPolicyBlockCandidate({ prediction: "BENIGN", governance }), false);
+  const blocked: BlockResult[] = [
+    MODEL_BLOCK,
+    GOVERNANCE_BLOCK,
+    { action: "block" },
+    { action: "block", source: "future_source" },
+    { action: "block", governance: { action: "allow", policyVersion: "synthetic-policy" } },
+  ];
+  for (const result of blocked) {
+    assert.equal(isPolicyBlockCandidate(result), true);
+    const runtime = new PiFirewallRuntime(
+      { sendMessage: () => undefined },
+      { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
+      dependencies([result]),
+    );
+    assert.deepEqual(await runtime.handleInput(inputEvent("input"), context()), { action: "handled" });
+  }
+  assert.equal(formatBlockMessage(GOVERNANCE_BLOCK), "Silmaril Firewall blocked this request under governance policy.");
+  assert.equal(formatBlockMessage(MODEL_BLOCK), "Silmaril Firewall blocked potentially malicious content.");
+  assert.equal(formatBlockMessage({ action: "block" }), "Silmaril Firewall blocked potentially malicious content.");
+});
+
+test("local evidence records known confidence and severity and never model scores", () => {
+  const build = (classification: BlockResult) => buildLocalProtectionEvent({
+    pluginName: "pi-firewall-plugin",
+    pluginVersion: "0.3.0",
+    hook: "tool_result",
+    mode: "block",
+    classification,
+    policyDecision: "block",
+    nativeAction: "content_replaced",
+  });
+  const absent = (event: object, keys: string[]) => keys.every((key) => !Object.hasOwn(event, key));
+  const levels = [
+    ["very_low", "minimal"],
+    ["low", "low"],
+    ["medium", "moderate"],
+    ["high", "high"],
+    ["very_high", "critical"],
+  ] as const;
+  for (const [confidence, severity] of levels) {
+    const event = build({ action: "block", source: "model", confidence, severity });
+    assert.equal(event.schemaVersion, 1);
+    assert.equal(event.prediction, "malicious");
+    assert.equal(event.confidence, confidence);
+    assert.equal(event.severity, severity);
+    assert.equal(absent(event, ["modelScore", "modelThreshold"]), true);
+  }
+  const unknownLevels = build({
+    action: "block",
+    source: "model",
+    ...({ confidence: "certain", severity: "extreme" } as object),
+  });
+  assert.equal(absent(unknownLevels, ["confidence", "severity"]), true);
+  assert.doesNotMatch(JSON.stringify(unknownLevels), /certain|extreme/u);
+  const cases: Array<[BlockResult, string]> = [
+    [ALLOW, "benign"],
+    [GOVERNANCE_BLOCK, "benign"],
+    [{ action: "block" }, "malicious"],
+  ];
+  for (const [classification, prediction] of cases) {
+    const event = build(classification);
+    assert.equal(event.prediction, prediction);
+    assert.equal(absent(event, ["confidence", "severity", "modelScore", "modelThreshold"]), true);
+  }
+});
+
+test("local evidence maps each harmful SDK outcome to its consequence category", () => {
+  const build = (outcome: string | undefined) => buildLocalProtectionEvent({
+    pluginName: "pi-firewall-plugin",
+    pluginVersion: "0.3.0",
+    hook: "tool_result",
+    mode: "block",
+    classification: outcome === undefined ? { action: "block", source: "model" } : { action: "block", source: "model", outcome },
+    policyDecision: "block",
+    nativeAction: "content_replaced",
+  });
+  const categories: Array<[string | undefined, string]> = [
+    ["secret_exposure", "credential_exposure"],
+    ["information_disclosure", "sensitive_data_exposure"],
+    ["system_compromise", "code_execution"],
+    ["service_disruption", "destructive_change"],
+    ["control_abuse", "unsafe_agent_control"],
+    ["prompt_injection", "unsafe_agent_control"],
+    ["code_generation", "other"],
+    [undefined, "unknown"],
+  ];
+  for (const [outcome, category] of categories) {
+    const event = build(outcome);
+    assert.equal(event.riskClass, category, String(outcome));
+    assert.equal(event.attemptedConsequence?.category, category);
+  }
+  assert.equal(build("control_abuse").attemptedConsequence?.summary, "Potential unsafe agent-control behavior detected.");
+});
+
+test("local evidence provenance versions are bounded the way the app ingests them", () => {
+  const provenance = (classification: unknown) => buildLocalProtectionEvent({
+    pluginName: "pi-firewall-plugin",
+    pluginVersion: "0.3.0",
+    hook: "tool_result",
+    mode: "shadow",
+    classification: classification as BlockResult,
+    policyDecision: "allow",
+    nativeAction: "allowed",
+  }).provenance;
+  const withModel = (modelId: unknown) => provenance({ action: "allow", modelId });
+  const withPolicy = (policyVersion: unknown) => provenance({
+    action: "allow",
+    governance: { action: "allow", policyVersion },
+  });
+  for (const [raw, bounded] of [
+    ["  release-7  ", "release-7"],
+    ["re\u0000le\tase\u0085-7", "release-7"],
+    ["re\u200Ble\u00ADase\uFEFF-7", "release-7"],
+    ["\uD83Drelease\uDC00-7", "release-7"],
+    ["release-\u{1F512}", "release-\u{1F512}"],
+    ["a".repeat(128), "a".repeat(128)],
+    ["a".repeat(129), "a".repeat(128)],
+    ["\u00E9".repeat(65), "\u00E9".repeat(64)],
+    [`${"a".repeat(127)}\u00E9`, "a".repeat(127)],
+    [`${"a".repeat(126)}\u{1F512}`, "a".repeat(126)],
+  ] as const) {
+    assert.equal(withModel(raw).modelVersion, bounded);
+    assert.equal(withPolicy(raw).policyVersion, bounded);
+    assert.ok(Buffer.byteLength(bounded, "utf8") <= 128);
+  }
+  for (const absent of [undefined, null, 7, {}, ["release-7"], "", "   ", "\u200B\u0000"]) {
+    assert.equal(Object.hasOwn(withModel(absent), "modelVersion"), false);
+    assert.equal(withPolicy(absent).policyVersion, "pi-plugin-policy-v1");
+  }
+  assert.equal(provenance(ALLOW).policyVersion, "pi-plugin-policy-v1");
+});
+
+test("model and policy versions reach local evidence on every classifier deployment generation", async () => {
+  for (const [name, deployment] of Object.entries(CLASSIFIER_DEPLOYMENTS)) {
+    await withClassifierDeployment(deployment.respond, async () => {
+      const events: any[] = [];
+      const runtime = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_MODE: "shadow" },
+        { firewallConstructor: Firewall, evidenceEmitter: async (event) => { events.push(event); } },
+      );
+      await runtime.handleToolResult(toolResult(GOVERNED_TEXT), context());
+      await runtime.handleToolResult(toolResult("plain result"), context());
+      assert.deepEqual(
+        events.map((event) => [event.provenance.policyVersion, event.provenance.modelVersion]),
+        [["synthetic-policy", "synthetic-model"], ["pi-plugin-policy-v1", "synthetic-model"]],
+        name,
+      );
+    });
   }
 });
 
@@ -569,20 +827,24 @@ test("network, timeout, SDK, configuration, malformed-response, and evidence fai
     );
     assert.equal(await runtime.handleToolCall(toolCall(), context()), undefined);
   }
-  const missingConfig = new PiFirewallRuntime({ sendMessage: () => undefined }, {}, dependencies([{ prediction: "MALICIOUS" }]));
+  const missingConfig = new PiFirewallRuntime({ sendMessage: () => undefined }, {}, dependencies([MODEL_BLOCK]));
   assert.equal(await missingConfig.handleToolCall(toolCall(), context()), undefined);
-  const malformed = new PiFirewallRuntime(
-    { sendMessage: () => undefined },
-    { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
-    dependencies([{ unexpected: "response" }]),
-  );
-  assert.equal(await malformed.handleToolCall(toolCall(), context()), undefined);
+  for (const malformedBody of [{ unexpected: "response" }, { results: [{ source: "model" }] }, { results: [] }]) {
+    await withClassifierDeployment(() => Response.json(malformedBody), async () => {
+      const malformed = new PiFirewallRuntime(
+        { sendMessage: () => undefined },
+        { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
+        { firewallConstructor: Firewall, evidenceEmitter: async () => undefined },
+      );
+      assert.equal(await malformed.handleToolCall(toolCall(), context()), undefined);
+    });
+  }
 
   const evidenceFailure = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     { ...BASE_ENV, SILMARIL_BLOCK_MALICIOUS: "true" },
     {
-      ...dependencies([{ prediction: "MALICIOUS" }]),
+      ...dependencies([MODEL_BLOCK]),
       evidenceEmitter: async () => { throw new Error("disk failure"); },
     },
   );
@@ -595,7 +857,7 @@ test("SDK client is cached per runtime and failed construction remains retryable
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     env,
-    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
+    dependencies([ALLOW, ALLOW, ALLOW], [], calls),
   );
   await runtime.handleInput(inputEvent("one"), context());
   await runtime.handleInput(inputEvent("two"), context());
@@ -610,7 +872,7 @@ test("SDK client is cached per runtime and failed construction remains retryable
       attempts += 1;
       if (attempts === 1) throw new Error("not ready");
     }
-    async classify() { return { prediction: "BENIGN" }; }
+    async classify() { return ALLOW; }
   }
   const retryable = new PiFirewallRuntime(
     { sendMessage: () => undefined },
@@ -627,7 +889,7 @@ test("request IDs are stable for the same host identity", async () => {
   const runtime = new PiFirewallRuntime(
     { sendMessage: () => undefined },
     BASE_ENV,
-    dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }], [], calls),
+    dependencies([ALLOW, ALLOW], [], calls),
   );
   await runtime.handleToolCall(toolCall({ command: "one" }), context());
   await runtime.handleToolCall(toolCall({ command: "two" }), context());
@@ -645,7 +907,7 @@ for (const [label, source] of [
     const runtime = new PiFirewallRuntime(
       { sendMessage: () => undefined },
       BASE_ENV,
-      dependencies([{ prediction: "BENIGN" }, { prediction: "BENIGN" }], events, calls),
+      dependencies([ALLOW, ALLOW], events, calls),
     );
     await runtime.handleInput(inputEvent("identical input", source), context());
     await runtime.handleInput(inputEvent("identical input", source), context());
@@ -690,7 +952,7 @@ test("local evidence remains bounded, private, atomic, and raw-content free", as
     requestId: "raw-request-id",
     sessionId: "raw-session-id",
     toolName: "bash",
-    classification: { prediction: "MALICIOUS", primaryOutcome: "code_execution", raw: "must-not-leak" },
+    classification: { ...MODEL_BLOCK, outcome: "code_execution", ...({ raw: "must-not-leak" } as object) },
     policyDecision: "block",
     nativeAction: "block_returned",
   });
@@ -740,7 +1002,7 @@ test("classify metadata includes the mac computer name without an endpoint id", 
   const env: Record<string, string> = { ...BASE_ENV, SILMARIL_DEBUG: "true" };
   const stderr = await captureStderr(async () => {
     const runtime = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
-      ...dependencies([{ prediction: "BENIGN" }], events, calls),
+      ...dependencies([ALLOW], events, calls),
       deviceName: () => "  Office Mac \n",
     });
     assert.deepEqual(await runtime.handleInput(inputEvent("user prompt"), context()), { action: "continue" });
@@ -762,7 +1024,7 @@ test("invalid or failed device-name lookup still classifies and drops spoofed me
   const env = { ...BASE_ENV, SILMARIL_DEBUG: "true" };
   const stderr = await captureStderr(async () => {
     const failing = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
-      ...dependencies([{ prediction: "BENIGN" }], events, calls),
+      ...dependencies([ALLOW], events, calls),
       deviceName: () => {
         throw new Error("scutil failed for Office Mac");
       },
@@ -770,7 +1032,7 @@ test("invalid or failed device-name lookup still classifies and drops spoofed me
     assert.deepEqual(await failing.handleInput(inputEvent("user prompt"), context()), { action: "continue" });
     for (const deviceName of ["Office\u0000Mac", "Office\u007FMac", "Office\u0085Mac"]) {
       const invalid = new PiFirewallRuntime({ sendMessage: () => undefined }, env, {
-        ...dependencies([{ prediction: "BENIGN" }], events, calls),
+        ...dependencies([ALLOW], events, calls),
         deviceName: () => deviceName,
       });
       assert.equal(await invalid.handleToolCall(toolCall(), context()), undefined);
@@ -803,11 +1065,11 @@ async function captureStderr(run: () => Promise<void>): Promise<string> {
 test("package manifest is Pi-native, SDK-pinned, and npm-ready", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.name, "@silmaril-security/pi-firewall-plugin");
-  assert.equal(packageJson.version, "0.2.11");
+  assert.equal(packageJson.version, "0.3.0");
   assert.deepEqual(packageJson.keywords.includes("pi-package"), true);
   assert.deepEqual(packageJson.pi.extensions, ["./extensions"]);
   assert.deepEqual(packageJson.pi.skills, ["./skills"]);
-  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "0.8.2");
+  assert.equal(packageJson.dependencies["@silmaril-security/sdk"], "1.0.0");
   assert.equal(packageJson.devDependencies["@earendil-works/pi-coding-agent"], "1.5.0");
   assert.equal(packageJson.peerDependencies["@earendil-works/pi-coding-agent"], "*");
   assert.equal(packageJson.engines.node, ">=22.19.0");

@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { loopbackVerdict } from "./native-acceptance/harness.ts";
 import {
   discoverAndLoadExtensions,
   ExtensionRunner,
@@ -36,12 +37,7 @@ test("Pi 1.5.0 loads and consumes all four lifecycle outcomes without a model", 
       }
       const malicious = /BLOCK_INPUT|BLOCK_TOOL_CALL|STRUCTURED_SECRET|SHADOW_SECRET|BLOCK_ASSISTANT/u.test(payload.text);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        prediction: malicious ? "MALICIOUS" : "BENIGN",
-        score: malicious ? 0.99 : 0.01,
-        threshold: 0.5,
-        primary_outcome: malicious ? "unsafe_agent_control" : "benign",
-      }));
+      response.end(JSON.stringify(loopbackVerdict(request.url ?? "", malicious)));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -185,7 +181,7 @@ test("Pi 1.5.0 loads and consumes all four lifecycle outcomes without a model", 
       });
       assert.equal(request.metadata.silmaril.governance.resource.kind, "tool");
       assert.equal(request.metadata.silmaril.governance.resource.parent_id, undefined);
-      assert.equal(request.metadata.silmaril.sdk_version, "0.8.2");
+      assert.equal(request.metadata.silmaril.sdk_version, "1.0.0");
     }
     const nestedRequest = toolRequests.find((request) => request.metadata.toolCallId === "parent-call/1");
     assert.ok(nestedRequest);

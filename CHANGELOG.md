@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-## 0.2.11 (release preparation)
+## 0.2.11
 
+- Ship [`v0.2.11`](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.11)
+  on GitHub and npm.
 - Bound each logical Pi classification with one aggregate, clearable deadline.
   Its signal cancels the pinned SDK 0.8.2 request and
   retry wait while the configured SDK timeout remains the per-attempt limit.

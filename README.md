@@ -8,18 +8,17 @@ This Pi package classifies raw user input, tool calls, tool results, and finaliz
 
 ## Install
 
-Version 0.2.10 is available in the [`v0.2.10` GitHub release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.10)
+Version 0.2.11 is available in the [`v0.2.11` GitHub release](https://github.com/Silmaril-Security/PiFirewallPlugin/releases/tag/v0.2.11)
 and on npm:
 
 ```sh
-pi install npm:@silmaril-security/pi-firewall-plugin@0.2.10
+pi install npm:@silmaril-security/pi-firewall-plugin@0.2.11
 ```
 
-The matching immutable Git tag is `v0.2.10` at commit
-`8d89b1657bdbf561ef2ce61b2cd236dbf757970f`:
+The matching immutable Git tag is `v0.2.11`:
 
 ```sh
-pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.10
+pi install git:github.com/Silmaril-Security/PiFirewallPlugin@v0.2.11
 ```
 
 Both installations provide the released package with
